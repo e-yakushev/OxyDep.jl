@@ -1,0 +1,13 @@
+# OXYDEP Ci_ contaminant parameters — loaded in addition to oxydep_bgc_params.toml
+# Rates are in 1/day (converted to 1/s internally)
+
+[Ci]
+r_ci_degrad = 0.003      # Ci degradation rate (1/d)
+r_ci_free_phy = 100.0    # Ci_free uptake by PHY (1/d)
+r_ci_food_het = 1.1      # Ci uptake by HET (1/d)
+thr_ci_food_het = 0.001  # Threshold for HET Ci uptake (mmol/m³)
+
+[sinking]
+Ci_PHY = 1.0 # Ci_PHY sinking speed (m/d)
+Ci_HET = 4.0 # Ci_HET sinking speed (m/d)
+Ci_POM = 9.0 # Ci_POM sinking speed (m/d)
