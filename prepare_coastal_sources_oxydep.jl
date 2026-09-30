@@ -4,8 +4,9 @@ using DelimitedFiles
 const SOURCE_FORCING = "/home/eya/FjordSim_data/inneroslofjorden/forcing_oxydep.nc"
 const OUTPUT_FORCING = "/home/eya/FjordSim_data/inneroslofjorden/forcing_rivers_oxydep.nc"
 const RIVERS_DIRECTORY = "/home/eya/FjordSim_data/inneroslofjorden/Rivers"
-const TRACER_LAMBDA_PER_DISCHARGE = 1 / (250 * 250) / 3
-const RIVER_DISCHARGE_MULTIPLIER = 5.0
+const EARTH_RADIUS = 6.371e6
+const LONGITUDE_RANGE = (10.46, 10.79)
+const LATITUDE_RANGE = (59.62, 59.92)
 
 const TRACER_VARIABLES = (
     ("NUT", "N3_n"),
@@ -22,7 +23,7 @@ struct RiverOutlet
     component::Symbol
     face_j::Int
     face_i::Int
-    lambda::Float64
+    velocity_lambda::Float64
     layers::Int
 end
 
@@ -47,11 +48,21 @@ read_discharge(id) = read_river_column(id, "N3_n", 2)
 read_concentration(id, suffix) = read_river_column(id, suffix, 3)
 pad_to_forcing_time(daily) = vcat(daily[1], daily, daily[end])
 
+function cell_area(ds, j)
+    Δλ = deg2rad(LONGITUDE_RANGE[2] - LONGITUDE_RANGE[1]) / ds.dim["Nx"]
+    Δφ = (LATITUDE_RANGE[2] - LATITUDE_RANGE[1]) / ds.dim["Ny"]
+    south = deg2rad(LATITUDE_RANGE[1] + (j - 1) * Δφ)
+    north = deg2rad(LATITUDE_RANGE[1] + j * Δφ)
+    return EARTH_RADIUS^2 * Δλ * (sin(north) - sin(south))
+end
+
+# The plume layers are 1 m thick, so the layer volume equals the cell area numerically.
+tracer_lambda_per_discharge(ds, outlet) = 1 / cell_area(ds, outlet.tracer_j)
+
 function write_outlet!(ds, outlet, flux)
     n_time = size(ds["NUT"], 4)
-    scaled_flux = RIVER_DISCHARGE_MULTIPLIER .* flux
-    per_layer_flux = pad_to_forcing_time(scaled_flux ./ outlet.layers)
-    lambda_series = TRACER_LAMBDA_PER_DISCHARGE .* per_layer_flux
+    per_layer_flux = pad_to_forcing_time(flux ./ outlet.layers)
+    tracer_lambda_series = tracer_lambda_per_discharge(ds, outlet) .* abs.(per_layer_flux)
     @assert length(per_layer_flux) == n_time
 
     n_surface = size(ds["NUT"], 3)
@@ -63,13 +74,13 @@ function write_outlet!(ds, outlet, flux)
         series = pad_to_forcing_time(read_concentration(outlet.id, suffix))
         for k in top_levels
             ds[variable][outlet.tracer_i, outlet.tracer_j, k, :] = series
-            ds[variable * "_lambda"][outlet.tracer_i, outlet.tracer_j, k, :] = lambda_series
+            ds[variable * "_lambda"][outlet.tracer_i, outlet.tracer_j, k, :] = tracer_lambda_series
         end
     end
 
     for k in top_levels
         ds[velocity_variable][outlet.face_i, outlet.face_j, k, :] = per_layer_flux
-        ds[velocity_lambda_variable][outlet.face_i, outlet.face_j, k, :] .= outlet.lambda
+        ds[velocity_lambda_variable][outlet.face_i, outlet.face_j, k, :] .= outlet.velocity_lambda
     end
 end
 
