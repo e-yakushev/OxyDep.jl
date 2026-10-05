@@ -1,6 +1,7 @@
 using FjordSim
 using Oceananigans
 using Oceananigans.Units: day, days, hour, hours, minutes, second
+using Oceananigans.TimeSteppers: QuasiAdamsBashforth2TimeStepper
 using FjordSim.Bathymetry: GEONORGE_DYBDEDATA_GDB
 using Dates: DateTime
 using SeawaterPolynomials.TEOS10: TEOS10EquationOfState
@@ -158,13 +159,12 @@ function inneroslofjorden()
                         # CATKE takes `w★ = sqrt(max(minimum_tke, e))`, so this floor, not the
                         # prognostic TKE, sets κ = 0.098·e_min/N over most of the column. See
                         # `oslofjorden()` for the measurements behind the value.
-                        CATKEVerticalDiffusivity(minimum_tke = 7e-6),
-                        # A biharmonic coefficient is only meaningful against Δx⁴, and this grid's
-                        # 99 m cell is a factor 14 smaller in Δx⁴ than Oslofjord's 193 m one. 1e3
-                        # damps the 2Δx mode with a 101 min e-folding (`Δx⁴/16ν₄`) against
-                        # Oslofjord's 72 min at 2e4, and leaves a 3026 s explicit-stability limit
-                        # `Δt ≤ Δx⁴/32ν₄` that `AdaptiveTimeStep` never measures. The 1e5 this file
-                        # once copied put that limit at 24 s, below the steps the run takes.
+                        #CATKEVerticalDiffusivity(minimum_tke = 7e-7, maximum_tracer_diffusivity = 1e-2), #% (minimum_tke = 7e-6)
+                        CATKEVerticalDiffusivity(minimum_tke = 9e-7, maximum_tracer_diffusivity = 1e-2), #% (minimum_tke = 7e-6)
+                        # Scaled with Δx⁴ for the ~300 m cell: 1e5 gives an 81 min e-folding
+                        # (`Δx⁴/16ν₄`) and a 2500 s explicit limit `Δt ≤ Δx⁴/32ν₄` that
+                        # `AdaptiveTimeStep` never measures.
+                  #      HorizontalScalarDiffusivity(ν = 5.0, κ = 2.0),
                         HorizontalScalarBiharmonicDiffusivity(ν = 1e3, κ = 1e2),
                     ),
                     width_cells = 16,
@@ -185,6 +185,8 @@ function inneroslofjorden()
                 free_surface       = SplitExplicitFreeSurfaceConfig(cfl = 0.7),
                 # Anything else the four constructors coupled_simulation calls accept, one slot
                 # each: :ocean_model, :ocean_simulation, :coupled_model, :coupled_simulation.
+                # QuasiAdamsBashforth2 with χ = -1/2 is forward Euler.
+                # extra_kwargs       = (ocean_model = (timestepper = QuasiAdamsBashforth2TimeStepper(χ = -0.5),),),
                 extra_kwargs       = (;),
             ),
             # MergedBoundaryConditions overloads field_boundary_conditions; each piece inside it
@@ -216,7 +218,7 @@ function inneroslofjorden()
             # Overloads attach_callback! — what the run reports while it runs. `report` is the
             # function itself, so a model whose tracers omit :T (which `progress` reads) names its
             # own here instead. An empty tuple runs silently.
-            callbacks = (ProgressCallback(name = :progress, interval = 1hour, report = progress),),
+            callbacks = (ProgressCallback(name = :progress, interval = 24hours, report = progress),),
             # Overloads attach_time_stepping! and initial_time_step.
             time_stepping = AdaptiveTimeStep(
                 initial_time_step    = 1second,

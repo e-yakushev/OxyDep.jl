@@ -278,8 +278,15 @@ FjordConfig(
         ),
         callbacks = simulation.callbacks,
         time_stepping = simulation.time_stepping,
-        initial_conditions = FromForcing(),
-        start_date = simulation.start_date,
+        ## for uniform initial conditions from forcing
+         initial_conditions = FromForcing(),
+         start_date = simulation.start_date,
+
+        ## for initial conditions from previous results
+        #initial_conditions = FromResults(joinpath(homedir(), "FjordSim_results", "inneroslofjorden_oxydep",
+        #     "snapshots_ocean_20261001T090439.nc"),),
+       # start_date = DateTime(2020, 1, 1),
+
         stop_time = simulation.stop_time,
         loops = simulation.loops,
         pickup = simulation.pickup,
