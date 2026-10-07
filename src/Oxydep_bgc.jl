@@ -309,13 +309,13 @@ end
 O2_suboxic = 20.0   # OXY threshold for oxic/suboxic switch (mmol/m3)
 Trel = 86400.        # Relaxation time for sediment exchange (s)
 # positive for flux from water to the sediments:
-b_O2_ox =       6.0  # flux of OXY at SWI, (mmol/m2/d) 
-b_O2_subox =   12.0  # flux of OXY at SWI in subox, (mmol/m2/d) 
-b_NUT_ox =     -1.0  # flux of NUT at SWI, (mmol/m2/d)
+b_O2_ox =       5.0  # flux of OXY at SWI, (mmol/m2/d) 
+b_O2_subox =   10.0  # flux of OXY at SWI in subox, (mmol/m2/d) 
+b_NUT_ox =     -2.0  # flux of NUT at SWI, (mmol/m2/d)
 b_NUT_subox =   7.0  # flux of NUT at SWI in subox, (mmol/m2/d) 
-b_DOM_ox =     -4.0  # flux of DOM at SWI, (mmol/m2/d) 
-b_DOM_subox = -10.0   # flux of DOM at SWI in subox, (mmol/m2/d)   
-bu = 0.001            # Burial coefficient (0<bu<1) (nd)
+b_DOM_ox =     -2.0  # flux of DOM at SWI, (mmol/m2/d) 
+b_DOM_subox =  -8.0  # flux of DOM at SWI in subox, (mmol/m2/d)   
+bu = 0.1            # Burial coefficient (0<bu<1) (nd) 0.001
 windspeed = 5.0       # wind speed 10 m, (m/s)
 
 function apply_sediment_config!(sed::Dict)
