@@ -160,12 +160,13 @@ function inneroslofjorden()
                         # prognostic TKE, sets κ = 0.098·e_min/N over most of the column. See
                         # `oslofjorden()` for the measurements behind the value.
                         #CATKEVerticalDiffusivity(minimum_tke = 7e-7, maximum_tracer_diffusivity = 1e-2), #% (minimum_tke = 7e-6)
-                        CATKEVerticalDiffusivity(minimum_tke = 9e-7, maximum_tracer_diffusivity = 1e-2), #% (minimum_tke = 7e-6)
+                        CATKEVerticalDiffusivity(minimum_tke = 3e-6, maximum_tracer_diffusivity = 1e-3), #% (minimum_tke = 7e-6)
                         # Scaled with Δx⁴ for the ~300 m cell: 1e5 gives an 81 min e-folding
                         # (`Δx⁴/16ν₄`) and a 2500 s explicit limit `Δt ≤ Δx⁴/32ν₄` that
                         # `AdaptiveTimeStep` never measures.
-                  #      HorizontalScalarDiffusivity(ν = 5.0, κ = 2.0),
-                        HorizontalScalarBiharmonicDiffusivity(ν = 1e3, κ = 1e2),
+                      #  HorizontalScalarDiffusivity(ν = 5.0, κ = 2.0),
+                        HorizontalScalarDiffusivity(ν = 2.0, κ = 10.0),
+                       # HorizontalScalarBiharmonicDiffusivity(ν = 2e4, κ = 2e3),
                     ),
                     width_cells = 16,
                     viscosity   = 13.0,

@@ -24,7 +24,7 @@ r_het_nut = 0.15   # Respiration rate (1/d)
 r_het_pom = 0.10   # Mortality rate (1/d)
 
 [POM]
-r_pom_nut_oxy = 0.05  # Oxic decay rate (1/d)
+r_pom_nut_oxy = 0.03  # Oxic decay rate (1/d)
 r_pom_dom = 0.10       # Decomposition rate (1/d)
 
 [DOM]
@@ -44,7 +44,7 @@ NtoB = 0.016   # N to biomass conversion (nd)
 [sinking]
 P = 1.0      # PHY sinking speed (m/d)
 HET = 4.0    # HET sinking speed (m/d)
-POM = 9.0    # POM sinking speed (m/d)
+POM = 10.0    # POM sinking speed (m/d)
 
 [sediment]
 Trel = 86400.0       # Relaxation time for sediment exchange (s)
@@ -54,5 +54,5 @@ b_NUT_ox = -3.0      # NUT flux at SWI, oxic (mmol/m²/d)
 b_NUT_subox = 7.0    # NUT flux at SWI, suboxic (mmol/m²/d)
 b_DOM_ox = -2.0      # DOM flux at SWI, oxic (mmol/m²/d)
 b_DOM_subox = -10.0  # DOM flux at SWI, suboxic (mmol/m²/d)
-bu = 0.1           # Burial coefficient (nd)
+bu = 0.5           # Burial coefficient (nd)
 windspeed = 5.0      # Wind speed at 10 m (m/s)

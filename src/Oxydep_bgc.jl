@@ -246,7 +246,7 @@ const B3 = -0.00007292
 const C1 = 0.0000826
 
 """ Function to calculate oxygen saturation in seawater """
-function oxygen_saturation(T::Float64, S::Float64, P::Float64)::Float64
+function oxygen_saturation(T, S, P)
 
     T_kelvin = T + 273.15  # Convert temperature to Kelvin
 
@@ -272,7 +272,7 @@ function oxygen_saturation(T::Float64, S::Float64, P::Float64)::Float64
 end
 
 """ Sc, Schmidt number for O2  following Wanninkhof 2014 """
-@inline function OxygenSchmidtNumber(T::Float64)::Float64
+@inline function OxygenSchmidtNumber(T)
     return ((1920.4 - 135.6 * T + 5.2122 * T^2 - 0.10939 * T^3 + 0.00093777 * T^4))
     # can be replaced by PolynomialParameterisation{4}((a, b, c, d, e)) i.e.:
     #    a = 1953.4, b = - 128.0, c = 3.9918, d = -0.050091, e = 0.00093777  
@@ -280,12 +280,12 @@ end
 end
 
 """ WindDependence, [mmol m-2s-1], Oxygen Sea Water Flux """
-function WindDependence(windspeed::Float64)::Float64
+function WindDependence(windspeed)
     return (0.251 * windspeed^2.0) #ko2o=0.251*windspeed^2*(Sc/660)^(-0.5)  Wanninkhof 2014
 end
 
 """ OxygenSeaWaterFlux, [mmol m-2s-1], Oxygen Sea Water Flux """
-function OxygenSeaWaterFlux(T::Float64, S::Float64, P::Float64, O₂::Float64, windspeed::Float64)::Float64
+function OxygenSeaWaterFlux(T, S, P, O₂, windspeed)
     return (
         WindDependence(windspeed) * (OxygenSchmidtNumber(T) / 660.0)^(-0.5) * (O₂ - oxygen_saturation(T, S, P)) * 0.24 /
         86400.0        # 0.24 is to convert from [cm/h] to [m/day]  * 0.24  / 86400.0
@@ -315,7 +315,7 @@ b_NUT_ox =     -2.0  # flux of NUT at SWI, (mmol/m2/d)
 b_NUT_subox =   7.0  # flux of NUT at SWI in subox, (mmol/m2/d) 
 b_DOM_ox =     -2.0  # flux of DOM at SWI, (mmol/m2/d) 
 b_DOM_subox =  -8.0  # flux of DOM at SWI in subox, (mmol/m2/d)   
-bu = 0.1            # Burial coefficient (0<bu<1) (nd) 0.001
+bu = 0.5            # Burial coefficient (0<bu<1) (nd) 0.001
 windspeed = 5.0       # wind speed 10 m, (m/s)
 
 function apply_sediment_config!(sed::Dict)
@@ -338,6 +338,10 @@ end
     return bottommost_active_node(i, j, k, grid, Center(), Center(), Center())
 end
 
+# The parameters are Float64, so the flux is converted to the tracer's type before `ifelse`.
+@inline bottom_tendency(bottom, flux, tracer) =
+    ifelse(bottom, convert(typeof(tracer), flux), zero(tracer))
+
 # Pure BGC sediment forcing kernels
 
 @inline function _oxy_sediment(i, j, k, grid, clock, fields, p)
@@ -345,7 +349,7 @@ end
     O₂ = @inbounds fields.O₂[i, j, k]
     flux = O₂ ≤ 0 ? zero(O₂) : -(F_ox(O₂, p.O2_suboxic) * p.b_O2_ox +
              F_subox(O₂, p.O2_suboxic) * p.b_O2_subox) / p.Trel
-    return ifelse(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), zero(O₂))
+    return bottom_tendency(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), O₂)
 end
 
 @inline function _nut_sediment(i, j, k, grid, clock, fields, p)
@@ -354,7 +358,7 @@ end
     NUT = @inbounds fields.NUT[i, j, k]
     flux = NUT ≤ 0 ? zero(NUT) : -(F_ox(O₂, p.O2_suboxic) * p.b_NUT_ox +
              F_subox(O₂, p.O2_suboxic) * p.b_NUT_subox) / p.Trel
-    return ifelse(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), zero(O₂))
+    return bottom_tendency(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), NUT)
 end
 
 @inline function _dom_sediment(i, j, k, grid, clock, fields, p)
@@ -362,7 +366,7 @@ end
     O₂ = @inbounds fields.O₂[i, j, k]
     flux = -(F_ox(O₂, p.O2_suboxic) * p.b_DOM_ox +
              F_subox(O₂, p.O2_suboxic) * p.b_DOM_subox) / p.Trel
-    return ifelse(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), zero(O₂))
+    return bottom_tendency(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), O₂)
 end
 
 # Pure BGC burial kernels
@@ -371,24 +375,24 @@ end
     bottom = _is_seafloor(i, j, k, grid)
     P = @inbounds fields.P[i, j, k]
     w = @inbounds p.w[i, j, k]
-    flux = -p.bu * w * P
-    return ifelse(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), zero(P))
+    flux = p.bu * w * P  # `w` is negative (downward), so this removes P
+    return bottom_tendency(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), P)
 end
 
 @inline function _HET_burial(i, j, k, grid, clock, fields, p)
     bottom = _is_seafloor(i, j, k, grid)
     HET = @inbounds fields.HET[i, j, k]
     w = @inbounds p.w[i, j, k]
-    flux = -p.bu * w * HET
-    return ifelse(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), zero(HET))
+    flux = p.bu * w * HET
+    return bottom_tendency(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), HET)
 end
 
 @inline function _POM_burial(i, j, k, grid, clock, fields, p)
     bottom = _is_seafloor(i, j, k, grid)
     POM = @inbounds fields.POM[i, j, k]
     w = @inbounds p.w[i, j, k]
-    flux = -p.bu * w * POM
-    return ifelse(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), zero(POM))
+    flux = p.bu * w * POM
+    return bottom_tendency(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), POM)
 end
 
 # =====================================================================

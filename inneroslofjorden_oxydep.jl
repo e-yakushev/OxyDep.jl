@@ -6,10 +6,11 @@ using DelimitedFiles
 using Dates: Date, dayofyear
 using OceanBioME.Light: TwoBandPhotosyntheticallyActiveRadiation
 using OceanBioME: ScaleNegativeTracers
+using Oceananigans.BoundaryConditions: FieldBoundaryConditions
 
 include(joinpath(@__DIR__, "inneroslofjorden.jl"))
 include(joinpath(@__DIR__, "src", "Oxydep.jl"))
-using .OXYDEPModel: OXYDEP
+using .OXYDEPModel: OXYDEP, bgh_oxydep_boundary_conditions, oxydep_sediment_forcings
 
 const SEA_BOUNDARY_DIRECTORY = joinpath(
     homedir(), "FjordSim_data", "inneroslofjorden", "Sea_boundary",
@@ -127,7 +128,30 @@ OxyDepModel(base; tracers, parameter_file, surface_PAR) =
 
 FjordSim.model_tracers(model::OxyDepModel) = model.tracers
 
-function FjordSim.coupled_simulation(model::OxyDepModel, grid; kwargs...)
+# FjordSim's forcing stays, and OxyDep's sediment term is added to each tracer it names.
+function oxydep_forcing(base, bgc)
+    sediment = oxydep_sediment_forcings(bgc)
+    combined = map(keys(sediment)) do name
+        haskey(base, name) ? (base[name], sediment[name]) : sediment[name]
+    end
+    return merge(base, NamedTuple{keys(sediment)}(combined))
+end
+
+with_top_condition(conditions, top) = FieldBoundaryConditions(
+    conditions.west, conditions.east, conditions.south, conditions.north,
+    conditions.bottom, top, conditions.immersed,
+)
+
+# FjordSim's open-edge conditions stay, and OxyDep's surface condition replaces the top.
+function oxydep_boundary_conditions(base, bgc, grid)
+    oxydep = bgh_oxydep_boundary_conditions(bgc, grid.Nz)
+    combined = map(keys(oxydep)) do name
+        haskey(base, name) ? with_top_condition(base[name], oxydep[name].top) : oxydep[name]
+    end
+    return merge(base, NamedTuple{keys(oxydep)}(combined))
+end
+
+function FjordSim.coupled_simulation(model::OxyDepModel, grid; forcing, boundary_conditions, kwargs...)
     light_attenuation = TwoBandPhotosyntheticallyActiveRadiation(grid, model.surface_PAR)
     negative_tracer_modifier = ScaleNegativeTracers(
         (:NUT, :P, :HET, :POM, :DOM, :O₂);
@@ -152,7 +176,13 @@ function FjordSim.coupled_simulation(model::OxyDepModel, grid; kwargs...)
         free_surface = model.base.free_surface,
         extra_kwargs = model.base.extra_kwargs,
     )
-    return coupled_simulation(configured_model, grid; kwargs...)
+    return coupled_simulation(
+        configured_model,
+        grid;
+        forcing = oxydep_forcing(forcing, bgc),
+        boundary_conditions = oxydep_boundary_conditions(boundary_conditions, bgc, grid),
+        kwargs...,
+    )
 end
 
 struct OxyDepForcing{F} <: AbstractForcingConfig
