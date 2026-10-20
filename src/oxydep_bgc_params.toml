@@ -7,7 +7,7 @@ Iopt = 80.0        # Optimal irradiance (W/m²)
 alphaI = 1.8       # Initial slope of PI-curve (1/d/(W/m²))
 betaI = 5.2e-4     # Photoinhibition parameter (1/d/(W/m²))
 gammaD = 0.71      # Adaptation to daylength (-)
-Max_uptake = 1.85   # Maximum nutrient uptake rate (1/d)
+Max_uptake = 1.25  #1.85   # Maximum nutrient uptake rate (1/d)
 Knut = 0.8         # Half-saturation for NUT uptake (nd)
 r_phy_nut = 0.10   # Specific respiration rate (1/d)
 r_phy_pom = 0.15   # Specific mortality rate (1/d)
@@ -24,16 +24,16 @@ r_het_nut = 0.15   # Respiration rate (1/d)
 r_het_pom = 0.10   # Mortality rate (1/d)
 
 [POM]
-r_pom_nut_oxy = 0.03  # Oxic decay rate (1/d)
-r_pom_dom = 0.10       # Decomposition rate (1/d)
+r_pom_nut_oxy = 0.02  # Oxic decay rate (1/d)
+r_pom_dom = 0.15       # Decomposition rate (1/d)
 
 [DOM]
-r_dom_nut_oxy = 0.08   # Oxic decay rate (1/d)
+r_dom_nut_oxy = 0.05   # Oxic decay rate (1/d)
 
 [O2]
 O2_suboxic = 20.0       # Oxic/suboxic threshold (mmol/m³)
-r_pom_nut_nut = 0.005   # POM denitrification rate (1/d)
-r_dom_nut_nut = 0.005   # DOM denitrification rate (1/d)
+r_pom_nut_nut = 0.002   # POM denitrification rate (1/d)
+r_dom_nut_nut = 0.002   # DOM denitrification rate (1/d)
 
 [stoichiometry]
 OtoN = 8.625   # Redfield O:N ratio (nd)
@@ -44,7 +44,7 @@ NtoB = 0.016   # N to biomass conversion (nd)
 [sinking]
 P = 1.0      # PHY sinking speed (m/d)
 HET = 4.0    # HET sinking speed (m/d)
-POM = 9.0    # POM sinking speed (m/d)
+POM = 8.0    # POM sinking speed (m/d)
 
 [sediment]
 Trel = 86400.0       # Relaxation time for sediment exchange (s)
@@ -53,6 +53,6 @@ b_O2_subox = 10.0    # O₂ flux at SWI, suboxic (mmol/m²/d)
 b_NUT_ox = -1.0      # NUT flux at SWI, oxic (mmol/m²/d)
 b_NUT_subox = 3.0    # NUT flux at SWI, suboxic (mmol/m²/d)
 b_DOM_ox = -0.5      # DOM flux at SWI, oxic (mmol/m²/d)
-b_DOM_subox = -5.0  # DOM flux at SWI, suboxic (mmol/m²/d)
-bu = 0.5           # Burial coefficient (nd)
+b_DOM_subox = -5.0   # DOM flux at SWI, suboxic (mmol/m²/d)
+bu = 0.25             # Burial coefficient (0<bu<1) (nd)
 windspeed = 5.0      # Wind speed at 10 m (m/s)

@@ -41,17 +41,21 @@ This file is organized: pure BGC code first, then Ci_ additions (when enabled).
 
 # POM
 @inline POM_decay_ox(r_pom_nut_oxy, POM, O₂, O2_suboxic) = 
-    O₂ < 0.1 ? zero(O₂) : r_pom_nut_oxy * POM * F_ox(O₂, O2_suboxic)
+    #O₂ < 0.1 ? zero(O₂) : 
+    r_pom_nut_oxy * POM * F_ox(O₂, O2_suboxic)
 @inline POM_decay_denitr(r_pom_nut_nut, POM, O₂, O2_suboxic, NUT) =
-    NUT < 0.05 ? zero(NUT) : r_pom_nut_nut * POM * F_subox(O₂, O2_suboxic)
+ #   NUT < 0.05 ? zero(NUT) : 
+    r_pom_nut_nut * POM * F_subox(O₂, O2_suboxic) * F_ox(NUT, 0.1)
 #! depends on NUT (NO3+NO2) and DOM (NH4+Urea+"real"DON) ! depends on T ! stops at NUT<0.01 
 @inline Autolys(r_pom_dom, POM) = r_pom_dom * POM
 
 # DOM
 @inline DOM_decay_ox(r_dom_nut_oxy, DOM, O₂, O2_suboxic) = 
-    O₂ < 0.1 ? zero(O₂) : r_dom_nut_oxy * DOM * F_ox(O₂, O2_suboxic)
+    #O₂ < 0.0001 ? zero(O₂) : 
+    r_dom_nut_oxy * DOM * F_ox(O₂, O2_suboxic)
 @inline DOM_decay_denitr(r_dom_nut_nut, DOM, O₂, O2_suboxic, NUT) =
-    NUT < 0.05 ? zero(NUT) : r_dom_nut_nut * DOM * F_subox(O₂, O2_suboxic)
+ #   NUT < 0.05 ? zero(NUT) : 
+    r_dom_nut_nut * DOM * F_subox(O₂, O2_suboxic) * F_ox(NUT, 0.1)
 #! depends on NUT (NO3+NO2) and DOM (NH4+Urea+"real"DON) ! depends on T ! stops at NUT<0.01 
 
 # =====================================================================
@@ -315,7 +319,7 @@ b_NUT_ox =     -2.0  # flux of NUT at SWI, (mmol/m2/d)
 b_NUT_subox =   7.0  # flux of NUT at SWI in subox, (mmol/m2/d) 
 b_DOM_ox =     -2.0  # flux of DOM at SWI, (mmol/m2/d) 
 b_DOM_subox =  -8.0  # flux of DOM at SWI in subox, (mmol/m2/d)   
-bu = 0.5            # Burial coefficient (0<bu<1) (nd) 0.001
+bu = 0.1            # Burial coefficient (0<bu<1) (nd) 0.001
 windspeed = 5.0       # wind speed 10 m, (m/s)
 
 function apply_sediment_config!(sed::Dict)
