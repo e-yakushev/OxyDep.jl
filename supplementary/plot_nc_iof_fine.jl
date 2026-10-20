@@ -24,7 +24,7 @@ import .plot_nc_stuff: prettydays, replace_zeros_with_NaN!, get_interior,
 # ===================== MAIN CODE STARTS HERE =====================
 base_dir = dirname(@__DIR__)
 folder = joinpath(homedir(), "FjordSim_results", "inneroslofjorden_oxydep")
-filename = joinpath(folder, "snapshots_ocean_20261010T134956.nc")   
+filename = joinpath(folder, "snapshots_ocean_20261013T164914.nc")   
 #folder = joinpath(base_dir, "data", "output", "inner_oslofjord_fine")
 #filename = joinpath(folder, "snapshots_ocean_fine")
 
