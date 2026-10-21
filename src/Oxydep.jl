@@ -47,10 +47,7 @@ using Oceananigans.Architectures: architecture
 using Oceananigans.Utils: launch!
 using OceanBioME:
     setup_velocity_fields, show_sinking_velocities, Biogeochemistry, ScaleNegativeTracers
-using OceanBioME.Light:
-    update_TwoBandPhotosyntheticallyActiveRadiation!,
-    default_surface_PAR,
-    TwoBandPhotosyntheticallyActiveRadiation
+using OceanBioME.Light: TwoBandPhotosyntheticallyActiveRadiation
 using OceanBioME.Sediments: sinking_flux
 using Oceananigans.BoundaryConditions: FluxBoundaryCondition, ValueBoundaryCondition, FieldBoundaryConditions
 
@@ -63,6 +60,7 @@ import Oceananigans.Biogeochemistry:
     update_biogeochemical_state!
 import OceanBioME: redfield, conserved_tracers
 import OceanBioME: maximum_sinking_velocity
+import OceanBioME
 
 # =====================================================================
 # Switch: set to true to include Ci tracers and calculations, false for pure BGC
@@ -186,6 +184,7 @@ struct OXYDEP{FT,B,W} <: AbstractContinuousFormBiogeochemistry
     CtoN::FT
     NtoN::FT
     NtoB::FT
+    chlorophyll_ratio::FT
     # Internal
     optionals::B
     sinking_velocities::W
@@ -221,9 +220,10 @@ function OXYDEP(grid;
     CtoN::FT = 6.625,
     NtoN::FT = 5.3,
     NtoB::FT = 0.016,
+    chlorophyll_ratio = 131//100,
     surface_photosynthetically_active_radiation = PAR⁰,
-    light_attenuation_model::LA = TwoBandPhotosyntheticallyActiveRadiation(;
-        grid, surface_PAR = surface_photosynthetically_active_radiation),
+    light_attenuation_model::LA = TwoBandPhotosyntheticallyActiveRadiation(
+        grid, surface_photosynthetically_active_radiation),
     sediment_model::S = nothing,
     TS_forced::Bool = false,
     Chemicals::Bool = false,
@@ -234,6 +234,8 @@ function OXYDEP(grid;
     modifiers::M = nothing,
 ) where {FT,LA,S,P,M}
 
+    isfinite(chlorophyll_ratio) && chlorophyll_ratio >= 0 ||
+        throw(ArgumentError("chlorophyll_ratio must be finite and non-negative (mg Chl/mmol N)"))
     sinking_velocities = setup_velocity_fields(sinking_speeds, grid, open_bottom)
     optionals = Val((TS_forced, Chemicals))
 
@@ -248,6 +250,7 @@ function OXYDEP(grid;
         r_dom_nut_oxy,
         O2_suboxic, r_pom_nut_nut, r_dom_nut_nut,
         OtoN, CtoN, NtoN, NtoB,
+        convert(FT, chlorophyll_ratio),
         optionals, sinking_velocities,
     )
 
@@ -277,6 +280,7 @@ adapt_structure(to, o::OXYDEP) = OXYDEP(
     adapt(to, o.r_dom_nut_oxy),
     adapt(to, o.O2_suboxic), adapt(to, o.r_pom_nut_nut), adapt(to, o.r_dom_nut_nut),
     adapt(to, o.OtoN), adapt(to, o.CtoN), adapt(to, o.NtoN), adapt(to, o.NtoB),
+    adapt(to, o.chlorophyll_ratio),
     adapt(to, o.optionals), adapt(to, o.sinking_velocities),
 )
 
@@ -317,6 +321,7 @@ struct OXYDEP{FT,B,W} <: AbstractContinuousFormBiogeochemistry
     CtoN::FT
     NtoN::FT
     NtoB::FT
+    chlorophyll_ratio::FT
     # Ci_
     r_ci_degrad::FT
     r_ci_free_phy::FT
@@ -358,6 +363,7 @@ function OXYDEP(grid;
     CtoN::FT = 6.625,
     NtoN::FT = 5.3,
     NtoB::FT = 0.016,
+    chlorophyll_ratio = 131//100,
     # Ci_ defaults
     r_ci_degrad::FT = 0.003 / day,
     r_ci_free_phy::FT = 100.0 / day,
@@ -365,8 +371,8 @@ function OXYDEP(grid;
     thr_ci_food_het::FT = 0.001,
     # Optional
     surface_photosynthetically_active_radiation = PAR⁰,
-    light_attenuation_model::LA = TwoBandPhotosyntheticallyActiveRadiation(;
-        grid, surface_PAR = surface_photosynthetically_active_radiation),
+    light_attenuation_model::LA = TwoBandPhotosyntheticallyActiveRadiation(
+        grid, surface_photosynthetically_active_radiation),
     sediment_model::S = nothing,
     TS_forced::Bool = false,
     Chemicals::Bool = false,
@@ -378,6 +384,8 @@ function OXYDEP(grid;
     modifiers::M = nothing,
 ) where {FT,LA,S,P,M}
 
+    isfinite(chlorophyll_ratio) && chlorophyll_ratio >= 0 ||
+        throw(ArgumentError("chlorophyll_ratio must be finite and non-negative (mg Chl/mmol N)"))
     sinking_velocities = setup_velocity_fields(sinking_speeds, grid, open_bottom)
     optionals = Val((TS_forced, Chemicals))
 
@@ -392,6 +400,7 @@ function OXYDEP(grid;
         r_dom_nut_oxy,
         O2_suboxic, r_pom_nut_nut, r_dom_nut_nut,
         OtoN, CtoN, NtoN, NtoB,
+        convert(FT, chlorophyll_ratio),
         r_ci_degrad, r_ci_free_phy, r_ci_food_het, thr_ci_food_het,
         optionals, sinking_velocities,
     )
@@ -422,6 +431,7 @@ adapt_structure(to, o::OXYDEP) = OXYDEP(
     adapt(to, o.r_dom_nut_oxy),
     adapt(to, o.O2_suboxic), adapt(to, o.r_pom_nut_nut), adapt(to, o.r_dom_nut_nut),
     adapt(to, o.OtoN), adapt(to, o.CtoN), adapt(to, o.NtoN), adapt(to, o.NtoB),
+    adapt(to, o.chlorophyll_ratio),
     adapt(to, o.r_ci_degrad), adapt(to, o.r_ci_free_phy),
     adapt(to, o.r_ci_food_het), adapt(to, o.thr_ci_food_het),
     adapt(to, o.optionals), adapt(to, o.sinking_velocities),

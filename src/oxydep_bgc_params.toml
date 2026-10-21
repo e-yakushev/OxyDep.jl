@@ -2,6 +2,7 @@
 # Rates are in 1/day (converted to 1/s internally)
 
 [PHY]
+chlorophyll_ratio = 1.31  # mg Chl/mmol N; chlorophyll = chlorophyll_ratio * P
 initial_photosynthetic_slope = 0.1953  # 1/(W/m²)/day
 Iopt = 80.0        # Optimal irradiance (W/m²)
 alphaI = 1.8       # Initial slope of PI-curve (1/d/(W/m²))
@@ -44,15 +45,15 @@ NtoB = 0.016   # N to biomass conversion (nd)
 [sinking]
 P = 1.0      # PHY sinking speed (m/d)
 HET = 4.0    # HET sinking speed (m/d)
-POM = 8.0    # POM sinking speed (m/d)
+POM = 11.0    # POM sinking speed (m/d)
 
 [sediment]
 Trel = 86400.0       # Relaxation time for sediment exchange (s)
 b_O2_ox = 5.0        # O₂ flux at SWI, oxic (mmol/m²/d)
-b_O2_subox = 10.0    # O₂ flux at SWI, suboxic (mmol/m²/d)
+b_O2_subox = 5.0    # O₂ flux at SWI, suboxic (mmol/m²/d)
 b_NUT_ox = -1.0      # NUT flux at SWI, oxic (mmol/m²/d)
 b_NUT_subox = 3.0    # NUT flux at SWI, suboxic (mmol/m²/d)
 b_DOM_ox = -0.5      # DOM flux at SWI, oxic (mmol/m²/d)
 b_DOM_subox = -5.0   # DOM flux at SWI, suboxic (mmol/m²/d)
-bu = 0.25             # Burial coefficient (0<bu<1) (nd)
+bu = 0.5             # Burial coefficient (0<bu<1) (nd)
 windspeed = 5.0      # Wind speed at 10 m (m/s)

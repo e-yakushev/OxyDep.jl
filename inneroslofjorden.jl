@@ -86,8 +86,7 @@ function inneroslofjorden()
             architecture     = :auto,
             parameters       = ["temperature", "salinity", "u_eastward", "v_northward"],
             years            = [2020],
-            # Overloads river_locations, river_series and download_rivers (all required), plus
-            # river_minimum_levels, river_plume_depth and river_lambdas (all optional). Its own
+            # Overloads river_locations, river_series and download_rivers (all required). Its own
             # `data_root`: the ELVIS and REGINE caches record the domain they were fetched for
             # under a fixed name, so sharing Oslofjord's `nve` directory would overwrite them.
             rivers           = NVERiversConfig(
@@ -100,12 +99,9 @@ function inneroslofjorden()
                 # `OF800RiversConfig` that landed one river in the domain, 602 m from the nearest
                 # water. No river coordinate appears in this file.
                 minimum_discharge = 0.5,
-                # 5 m of surface plume, which is 4 cells on the vertical grid above.
-                default_plume_depth = 5.0,
-                minimum_levels    = 0,
-                # A stability bound: at 99 m cells Drammenselva's peak discharge reaches λ·Δt > 1,
-                # which `ForcingFromFile` reads as an x-flux.
-                minimum_relaxation_timescale = 600.0,
+                # Rivers enter as a volume source through the surface of their columns; each is
+                # spread over enough columns to stay under this vertical speed in the 1 m top cell.
+                maximum_inflow_velocity = 1.0e-3,
                 # This smaller domain does not contain Drammenselva or Lierelva, so there are no
                 # out-of-domain gauge overrides. The discovered mouths are used as-is.
                 outlets          = NVERiver[],

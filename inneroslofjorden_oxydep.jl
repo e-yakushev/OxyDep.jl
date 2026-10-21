@@ -10,7 +10,11 @@ using Oceananigans.BoundaryConditions: FieldBoundaryConditions
 
 include(joinpath(@__DIR__, "inneroslofjorden.jl"))
 include(joinpath(@__DIR__, "src", "Oxydep.jl"))
+if !isdefined(@__MODULE__, :CoastalRiverSources)
+    include(joinpath(@__DIR__, "prepare_coastal_sources_oxydep.jl"))
+end
 using .OXYDEPModel: OXYDEP, bgh_oxydep_boundary_conditions, oxydep_sediment_forcings
+using .CoastalRiverSources: CSVRiversConfig
 
 const SEA_BOUNDARY_DIRECTORY = joinpath(
     homedir(), "FjordSim_data", "inneroslofjorden", "Sea_boundary",
@@ -185,12 +189,12 @@ function FjordSim.coupled_simulation(model::OxyDepModel, grid; forcing, boundary
     )
 end
 
-struct OxyDepForcing{F} <: AbstractForcingConfig
+struct OxyDepForcing{F,R} <: AbstractForcingConfig
     base::F
     data_root::String
     output_file::String
     plot_file::String
-    rivers
+    rivers::R
 end
 
 OxyDepForcing(base) = OxyDepForcing(
@@ -246,9 +250,7 @@ end
 base = inneroslofjorden()
 sea_boundary_data = load_sea_boundary_data()
 
-rivers = deepcopy(base.forcing_config.rivers)
-rivers.output_file = "forcing_rivers_oxydep.nc"
-rivers.plot_file = "forcing_rivers_oxydep.png"
+rivers = CSVRiversConfig(base.forcing_config.rivers)
 forcing = OxyDepForcing(NorKystConfig(
     data_root = base.forcing_config.data_root,
     output_directory = base.forcing_config.output_directory,

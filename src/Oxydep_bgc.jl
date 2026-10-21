@@ -3,6 +3,10 @@ OxyDep basic biogeochemical transformations between NUT, P, HET, DOM, POM, O2.
 This file is organized: pure BGC code first, then Ci_ additions (when enabled).
 """
 
+# P is mmol N/m3; the light model requires chlorophyll in mg/m3.
+@inline OceanBioME.chlorophyll(bgc::OXYDEP, model) =
+    convert(eltype(model.grid), bgc.chlorophyll_ratio) * model.tracers.P
+
 # =====================================================================
 # BGC helper functions: limiters, growth, grazing, decay (used by both modes)
 # =====================================================================
