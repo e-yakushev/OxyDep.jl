@@ -2,11 +2,15 @@
 Local daily river forcing for OxyDep.
 
 Run with:
-    julia --project=/home/eya/src/FjordSim.jl prepare_coastal_sources_oxydep.jl
+    julia --project=/path/to/FjordSim.jl cases/inneroslofjorden/prepare_coastal_sources_oxydep.jl
 
-The script loads inneroslofjorden_oxydep.jl and calls FjordSim.add_rivers: the output is a
-standalone (Nx, Ny, time) river file, not a copy of the interior forcing. Bathymetry must
-already exist; no NVE key, download, or prepared interior forcing is needed.
+Reads bathymetry.nc and Rivers/ under fjord_data_root("inneroslofjorden") and writes
+forcing_rivers_oxydep.nc plus its diagnostic plot. The output is a standalone
+(Nx, Ny, time) river file, not a copy of the interior forcing. Bathymetry must already
+exist; no simulation setup, NVE key, download, or prepared interior forcing is needed.
+The default window is 2020 through 2021-01-01. To replace an existing output, include
+this script and call CoastalRiverSources.main(overwrite=true). A simulation setup
+uses CSVRiversConfig() as its river_config.
 
 CSV column 1 is day of year, column 2 discharge in m3/s, and column 3 concentration.
 Discharge signs encode old grid-face directions: river 12 is positive, rivers 13-16
@@ -24,9 +28,13 @@ All other missing dates are errors; data are never repeated as a climatology.
 """
 module CoastalRiverSources
 
-using Dates: Date, Day, dayofyear, daysinyear, year
+using Dates: Date, DateTime, Day, dayofyear, daysinyear, year
 using DelimitedFiles: readdlm
-using FjordSim
+using FjordSim: Rivers, Plotting, fjord_data_root
+using FjordSim.Configs: AbstractRiverConfig
+using FjordSim.Rivers: RiverLocation
+using Oceananigans: CPU
+using Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid
 
 export CSVRiversConfig
 
@@ -75,13 +83,25 @@ struct CSVRiversConfig <: AbstractRiverConfig
     hold_final_day::Bool
 end
 
-function CSVRiversConfig(
-    base;
-    directory = joinpath(base.data_root, "Rivers"),
+function CSVRiversConfig(base; kwargs...)
+    return CSVRiversConfig(;
+        data_root = base.data_root,
+        years = base.years,
+        search_radius = base.search_radius,
+        maximum_inflow_velocity = base.maximum_inflow_velocity,
+        kwargs...,
+    )
+end
+
+function CSVRiversConfig(;
+    data_root = fjord_data_root("inneroslofjorden"),
+    directory = joinpath(data_root, "Rivers"),
     output_file = "forcing_rivers_oxydep.nc",
     plot_file = "forcing_rivers_oxydep.png",
     locations = RIVER_LOCATIONS,
-    years = base.years,
+    years = [2020],
+    search_radius = 10,
+    maximum_inflow_velocity = 1e-3,
     csv_tracers = CSV_TRACERS,
     constants = CONSTANT_TRACERS,
     overrides = RIVER_CONCENTRATION_OVERRIDES,
@@ -110,16 +130,16 @@ function CSVRiversConfig(
         error("CSV tracer scales and offsets must be finite")
 
     return CSVRiversConfig(
-        base.data_root, String(output_file), String(plot_file), String(directory),
-        copy(locations), sort(unique(years)), base.search_radius, base.maximum_inflow_velocity,
+        String(data_root), String(output_file), String(plot_file), String(directory),
+        copy(locations), sort(unique(years)), search_radius, maximum_inflow_velocity,
         copy(csv_tracers), copy(constants), deepcopy(overrides), copy(discharge_directions),
         hold_final_day,
     )
 end
 
-FjordSim.river_locations(config::CSVRiversConfig) = config.locations
+Rivers.river_locations(config::CSVRiversConfig) = config.locations
 
-function FjordSim.download_rivers(target_grid, config::CSVRiversConfig)
+function Rivers.fetch_rivers(target_grid, config::CSVRiversConfig)
     isdir(config.directory) || error("River CSV directory does not exist: $(config.directory)")
     @info "Using local river CSVs from $(config.directory); no download required"
     return nothing
@@ -178,7 +198,7 @@ function record_indices(config, records, times, id, suffix)
     return result
 end
 
-function FjordSim.river_discharge(config::CSVRiversConfig, times)
+function Rivers.river_discharge(config::CSVRiversConfig, times)
     discharge = Matrix{Float64}(undef, length(config.locations), length(times))
     for (row, location) in enumerate(config.locations)
         records = river_records(config, location.id, "N3_n")
@@ -188,7 +208,7 @@ function FjordSim.river_discharge(config::CSVRiversConfig, times)
     return discharge
 end
 
-function FjordSim.river_series(config::CSVRiversConfig, times)
+function Rivers.river_series(config::CSVRiversConfig, times)
     shape = (length(config.locations), length(times))
     series = Dict(name => fill(value, shape) for (name, value) in config.constants)
     for tracer in config.csv_tracers
@@ -217,10 +237,22 @@ function FjordSim.river_series(config::CSVRiversConfig, times)
     return series
 end
 
-function main()
-    config = FjordSim.Setups.fjord_config(joinpath(@__DIR__, "inneroslofjorden_oxydep.jl"))
-    result = Base.invokelatest(add_rivers, config)
+function main(;
+    config = CSVRiversConfig(),
+    coverage = (DateTime(minimum(config.years), 1, 1), DateTime(maximum(config.years) + 1, 1, 1)),
+    overwrite = false,
+)
+    bathymetry_file = joinpath(config.data_root, "bathymetry.nc")
+    isfile(bathymetry_file) || error("Prepare bathymetry first: $bathymetry_file")
+    output_file = Rivers.river_forcing_path(config)
+    isfile(output_file) && !overwrite &&
+        error("Output already exists: $output_file. Call main(overwrite=true) to replace it.")
+    grid = ImmersedBoundaryGrid(bathymetry_file, CPU(), (7, 7, 7), Float32)
+    Rivers.fetch_rivers(grid, config)
+    result = Rivers.place_rivers(grid, config; coverage)
+    plot_file = Plotting.plot_rivers(grid, config, result.output_file, result.mouths)
     @info "OxyDep CSV river forcing saved to $(result.output_file)"
+    @info "River plot saved to $plot_file"
     return result
 end
 
