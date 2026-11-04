@@ -22,49 +22,52 @@ const INNEROSLOFJORDEN_UNIFORM_INITIAL_CONDITIONS = (
 )
 
 """
-    initial_conditions_for_run(uniform; results_root, snapshot_root = results_root)
+    initial_conditions_for_run(source, uniform; results_directory)
 
-`uniform` by default. With `FJORDSIM_INITIAL_CONDITIONS=last_snapshot`, a `FromResults` of the
-newest run-tagged `snapshots_ocean_*.nc` in `snapshot_root`, or of `FJORDSIM_RESTART_SNAPSHOT`
-(relative to `snapshot_root`) when that is set.
+The initial state a run starts from, chosen by `source`:
+
+- `:uniform`: `uniform`, a `NamedTuple` of constants.
+- `:results`: the last record of the newest `snapshots_ocean_*.nc` in `results_directory`, a
+  previous run's output. Only the state is read — T, S, u, v and every other model tracer the file
+  carries; the clock still starts at the run's own `start_date`, and η and CATKE's `e` start from
+  rest, so this is a warm start rather than a continuation.
 """
-function initial_conditions_for_run(uniform; results_root, snapshot_root = results_root)
-    mode = get(ENV, "FJORDSIM_INITIAL_CONDITIONS", "uniform")
-    mode == "uniform" && return uniform
-    mode == "last_snapshot" || error(
-        "FJORDSIM_INITIAL_CONDITIONS must be 'uniform' or 'last_snapshot', got '$mode'",
-    )
+function initial_conditions_for_run(source::Symbol, uniform; results_directory)
+    source === :uniform && return uniform
+    source === :results || throw(ArgumentError(
+        "The initial-conditions source must be :uniform or :results, got :$source",
+    ))
 
-    requested_snapshot = get(ENV, "FJORDSIM_RESTART_SNAPSHOT", "")
-    if isempty(requested_snapshot)
-        isdir(snapshot_root) || error(
-            "No results directory $snapshot_root; run the first year before selecting last_snapshot.",
-        )
-        snapshot_pattern = r"^snapshots_ocean_\d{8}T\d{6}(?:_loop\d+)?\.nc$"
-        snapshots = sort(filter(name -> occursin(snapshot_pattern, name), readdir(snapshot_root)))
-        isempty(snapshots) && error(
-            "No run-tagged snapshots_ocean_*.nc found in $snapshot_root. " *
-            "Run the first year or set FJORDSIM_RESTART_SNAPSHOT to a snapshot path.",
-        )
-        requested_snapshot = joinpath(snapshot_root, last(snapshots))
-    elseif !isabspath(requested_snapshot)
-        requested_snapshot = joinpath(snapshot_root, requested_snapshot)
-    end
-
-    isfile(requested_snapshot) || error("Restart snapshot does not exist: $requested_snapshot")
-    return FromResults(requested_snapshot)
+    isdir(results_directory) || error("No results directory $results_directory to start from.")
+    # Run tags are timestamps, so the newest file sorts last.
+    snapshots = sort(filter(
+        name -> startswith(name, "snapshots_ocean_") && endswith(name, ".nc"),
+        readdir(results_directory),
+    ))
+    isempty(snapshots) && error("No snapshots_ocean_*.nc in $results_directory to start from.")
+    return FromResults(joinpath(results_directory, last(snapshots)))
 end
 
 """
-    inneroslofjorden(; architecture = :auto)
+    inneroslofjorden(;
+        architecture = :auto,
+        initial_conditions_source = :uniform,
+        initial_results_directory = fjord_results_root("inneroslofjorden_init"),
+    )
 
 Inner Oslofjord hydrophysics for calendar year 2020 on a 63 x 114 x 17 grid covering
 10.46-10.79°E, 59.62-59.92°N — 293 m cells — open to the south. There is no interior forcing
-config: the initial state is uniform, and the rivers, southern open-boundary data and NORA3 atmosphere are
+config: the initial state is uniform, or with `initial_conditions_source = :results` the last
+record of a previous run in `initial_results_directory` (`initial_conditions_for_run`), and the
+rivers, southern open-boundary data and NORA3 atmosphere are
 the time-dependent inputs. `inneroslofjorden_oxydep.jl` replaces the river, boundary-data and
 biogeochemistry components and keeps this physics and run window.
 """
-function inneroslofjorden(; architecture = :auto)
+function inneroslofjorden(;
+    architecture = :auto,
+    initial_conditions_source = :uniform,
+    initial_results_directory = fjord_results_root("inneroslofjorden_init"),
+)
     data_root = fjord_data_root("inneroslofjorden")
     FT = Float32
 
@@ -221,7 +224,11 @@ function inneroslofjorden(; architecture = :auto)
                 max_time_step        = 3minutes,
                 max_time_step_change = 1.01,
             ),
-            initial_conditions = INNEROSLOFJORDEN_UNIFORM_INITIAL_CONDITIONS,
+            initial_conditions = initial_conditions_for_run(
+                initial_conditions_source,
+                INNEROSLOFJORDEN_UNIFORM_INITIAL_CONDITIONS;
+                results_directory = initial_results_directory,
+            ),
             # The whole of 2020, a leap year, so 366 days from midnight lands on midnight. The
             # prepare steps pad their time axes to reach both ends of this window.
             start_date         = DateTime(2020, 1, 1),

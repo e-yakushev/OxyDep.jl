@@ -15,12 +15,11 @@ all under `fjord_data_root("inneroslofjorden")`.
     julia --project=/path/to/FjordSim.jl -m FjordSim run_simulation \\
         --config cases/inneroslofjorden/inneroslofjorden_oxydep.jl
 
-The initial state is uniform: `inneroslofjorden.jl`'s T and S, and the January 1 boundary
-profiles at 0.5 m for NUT, DOM and O₂. Set `FJORDSIM_INITIAL_CONDITIONS=last_snapshot` to start
-from the newest run-tagged ocean snapshot of the first run instead (or name one with
-`FJORDSIM_RESTART_SNAPSHOT`). That resets the clock to `start_date`, so it repeats the 2020
-boundary and atmosphere cycle rather than continuing in time, and it writes to its own results
-directory, `inneroslofjorden_oxydep_restart`.
+The initial state is set by `INITIAL_CONDITIONS_SOURCE` below: `:uniform` starts from
+`inneroslofjorden.jl`'s T and S and the January 1 boundary profiles at 0.5 m for NUT, DOM and O₂;
+`:results` starts from the last record of the newest `snapshots_ocean_*.nc` in
+`INITIAL_RESULTS_DIRECTORY`. Either way the run starts on `start_date`, 1 January 2020, and
+repeats the 2020 boundary, river and atmosphere cycle.
 """
 
 using FjordSim
@@ -45,6 +44,17 @@ using .OXYDEPModel: OXYDEP, bgh_oxydep_boundary_conditions, oxydep_sediment_forc
 using .CoastalRiverSources: CSVRiversConfig
 
 const OXYDEP_TRACERS = (:NUT, :P, :HET, :POM, :DOM, :O₂)
+
+# The initial-conditions switch: `:uniform` for the uniform state, `:results` for the last record of
+# a previous run's ocean snapshot in `INITIAL_RESULTS_DIRECTORY`. The new run writes to
+# `fjord_results_root("inneroslofjorden_oxydep")` in both cases, so archive what is there first.
+INITIAL_CONDITIONS_SOURCE = :results
+INITIAL_RESULTS_DIRECTORY = fjord_results_root("inneroslofjorden_oxydep_init")
+
+# `true` resumes the run in `fjord_results_root("inneroslofjorden_oxydep")` from its newest
+# checkpoint, superseding the initial conditions above; with no checkpoint there it warns and starts
+# fresh. `false` starts fresh and refuses a directory that still holds an earlier run's checkpoints.
+PICKUP = true
 
 """
     OxyDepModel(base, tracers)
@@ -129,14 +139,14 @@ end
     return max(0, 1361 * 0.43 * 0.5 * earth_orbit_factor * solar_elevation)
 end
 
-function inneroslofjorden_oxydep(; architecture = :auto)
+function inneroslofjorden_oxydep(;
+    architecture = :auto,
+    initial_conditions_source = INITIAL_CONDITIONS_SOURCE,
+    initial_results_directory = INITIAL_RESULTS_DIRECTORY,
+)
     base = inneroslofjorden(; architecture)
     physics = base.model_config
     run = base.run_config
-    previous_results_root = fjord_results_root("inneroslofjorden_oxydep")
-    initial_condition_mode = get(ENV, "FJORDSIM_INITIAL_CONDITIONS", "uniform")
-    results_root = initial_condition_mode == "last_snapshot" ?
-        fjord_results_root("inneroslofjorden_oxydep_restart") : previous_results_root
     tracers = (:T, :S, OXYDEP_TRACERS...)
     uniform_initial_conditions = merge(
         INNEROSLOFJORDEN_UNIFORM_INITIAL_CONDITIONS,
@@ -186,7 +196,7 @@ function inneroslofjorden_oxydep(; architecture = :auto)
         ),
         boundary_condition_configs = base.boundary_condition_configs,
         run_config = RunConfig(
-            results_root = results_root,
+            results_root = fjord_results_root("inneroslofjorden_oxydep"),
             architecture = run.architecture,
             writers = (
                 SnapshotWriter(
@@ -209,14 +219,14 @@ function inneroslofjorden_oxydep(; architecture = :auto)
             callbacks = run.callbacks,
             time_stepping = run.time_stepping,
             initial_conditions = initial_conditions_for_run(
+                initial_conditions_source,
                 uniform_initial_conditions;
-                results_root,
-                snapshot_root = previous_results_root,
+                results_directory = initial_results_directory,
             ),
             start_date = run.start_date,
             stop_time = run.stop_time,
             loops = run.loops,
-            pickup = run.pickup,
+            pickup = PICKUP,
         ),
     )
 end
