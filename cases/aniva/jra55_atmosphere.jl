@@ -1,4 +1,38 @@
-using FjordSim
+# The JRA55-do repeat-year (RYF) atmosphere for the Aniva Bay setup, as a FjordSim atmosphere config.
+#
+# Included by a setup, it defines `JRA55RYFConfig`, which `download_atmosphere`, `prepare_atmosphere`
+# and `run_simulation` dispatch on. Run as a script, it prepares the atmosphere for the domain of
+# `bathymetry_aniva.nc` directly:
+#
+#   julia jra55_atmosphere.jl
+#
+# Direct execution activates the sibling FjordSim.jl project. Set FJORDSIM_PROJECT to use a
+# different checkout; including this file from a setup keeps that setup's active environment.
+#
+# which subsets the global RYF files in `~/FjordSim_data/aniva/JRA55/` (a few MB in `JRA55/subset/`,
+# re-cut when the existing subset does not cover the domain) and writes
+# `~/FjordSim_data/aniva/atmosphere_aniva.nc` and its plot for `START_DATE` to `STOP_DATE`.
+
+if abspath(PROGRAM_FILE) == abspath(@__FILE__)
+    import Pkg
+    project_directory = abspath(get(ENV, "FJORDSIM_PROJECT",
+        joinpath(@__DIR__, "..", "..", "..", "FjordSim.jl")))
+    isfile(joinpath(project_directory, "Project.toml")) || error(
+        "FjordSim project not found at $project_directory; set FJORDSIM_PROJECT to its directory.",
+    )
+    Pkg.activate(project_directory)
+end
+
+import FjordSim
+using FjordSim: fjord_data_root
+using FjordSim.Configs: AbstractAtmosphereConfig
+using FjordSim.Atmospheres:
+    Atmospheres, atmosphere_directory, atmosphere_path, atmosphere_target_axes,
+    atmosphere_variable_attributes
+using FjordSim.Atmospheres.NORA3: MultiYearNORA3, NORA3PrescribedAtmosphere, NORA3PrescribedRadiation
+using FjordSim.Plotting: plot_atmosphere
+using Oceananigans: CPU
+using Oceananigans.Grids: x_domain, y_domain
 using NCDatasets
 using Dates: DateTime, Hour, Date
 import Dates
@@ -27,13 +61,14 @@ Atmosphere configuration for the JRA55-do 1.4.0 repeat-year forcing (RYF), globa
 `RYF.<variable>.<source_period>.nc` on the TL319 grid, already on disk in `atmosphere_directory`.
 
 RYF is one climatological year, not the weather of any real year. The files carry a placeholder time
-axis, so `prepare_atmosphere` dates each record by its position in the year: the record for a given
+axis, so `regrid_atmosphere` dates each record by its position in the year: the record for a given
 month, day and hour of the simulated window is the one at the same calendar position in the file,
 with 29 February taking 28 February. The file's seasonal cycle (insolation, temperature) starts on
 1 January, so no offset is applied.
 
-`download_atmosphere` subsets the global files to the prepared grid's box, which shrinks them from
-about 12 GB to a few MB, and `prepare_atmosphere` regrids that subset to a regular lon/lat grid.
+`fetch_atmosphere` subsets the global files to the prepared grid's box, which shrinks them from
+about 12 GB to a few MB, and `regrid_atmosphere` regrids that subset to a regular lon/lat grid in the
+layout FjordSim's NORA3 reader takes, so the simulation reads it back with that reader.
 
 # Fields
 - `data_root`, `output_directory`: `output_directory` holds the global RYF files; the subset goes
@@ -45,8 +80,8 @@ about 12 GB to a few MB, and `prepare_atmosphere` regrids that subset to a regul
 Base.@kwdef mutable struct JRA55RYFConfig <: AbstractAtmosphereConfig
     data_root::String
     output_directory::String = "JRA55"
-    output_file::String = "atmosphere.nc"
-    plot_file::String = "atmosphere.png"
+    output_file::String = "atmosphere_aniva.nc"
+    plot_file::String = "atmosphere_aniva.png"
     source_period::String = "1990_1991"
     resolution::Float64 = 0.25
     padding::Float64 = 1.0
@@ -69,23 +104,34 @@ function jra55_window(axis, lower, upper)
     return first_index:last_index
 end
 
+# Whether the subset at `subset_path` already spans the prepared `longitude` and `latitude`.
+function jra55_subset_covers(subset_path, longitude, latitude)
+    isfile(subset_path) || return false
+    return NCDataset(subset_path) do ds
+        subset_longitude = ds["lon"][:]
+        subset_latitude = ds["lat"][:]
+        first(subset_longitude) <= first(longitude) && last(longitude) <= last(subset_longitude) &&
+            first(subset_latitude) <= first(latitude) && last(latitude) <= last(subset_latitude)
+    end
+end
+
 """
-    download_atmosphere(target_grid, config::JRA55RYFConfig)
+    fetch_atmosphere(target_grid, config::JRA55RYFConfig)
 
 Subset each global RYF file to the prepared grid's box, into `atmosphere_directory(config)/subset`.
 
-A file whose subset already exists is skipped, so changing `resolution` or `padding` needs the
-`subset` folder deleted first. Returns the subset directory.
+A subset that already spans the prepared grid is kept; one that does not, cut for another domain,
+`resolution` or `padding`, is cut again. Returns the subset directory.
 """
-function FjordSim.download_atmosphere(target_grid, config::JRA55RYFConfig)
+function Atmospheres.fetch_atmosphere(target_grid, config::JRA55RYFConfig)
     longitude, latitude = atmosphere_target_axes(target_grid, config)
     mkpath(dirname(jra55_subset_path(config, first(jra55_source_names()))))
 
     for name in jra55_source_names()
+        subset_path = jra55_subset_path(config, name)
+        jra55_subset_covers(subset_path, longitude, latitude) && continue
         source_path = jra55_source_path(config, name)
         isfile(source_path) || error("JRA55 source file $source_path does not exist")
-        subset_path = jra55_subset_path(config, name)
-        isfile(subset_path) && continue
 
         @info "Subsetting $(basename(source_path))"
         temporary_path = subset_path * ".tmp"
@@ -125,7 +171,7 @@ end
 function jra55_interpolation_weights(axis, targets)
     (first(targets) >= first(axis) && last(targets) <= last(axis)) || error(
         "Prepared grid reaches outside the subset ($(first(targets)) to $(last(targets)) vs " *
-        "$(first(axis)) to $(last(axis))). Delete the subset folder and re-run `download_atmosphere`.",
+        "$(first(axis)) to $(last(axis))). Re-run `download_atmosphere` to cut a new subset.",
     )
     lower = [clamp(searchsortedlast(axis, target), 1, length(axis) - 1) for target in targets]
     weight = [(target - axis[index]) / (axis[index + 1] - axis[index]) for (target, index) in zip(targets, lower)]
@@ -144,7 +190,7 @@ function jra55_interpolate!(output, slab, longitude_weights, latitude_weights)
 end
 
 """
-    prepare_atmosphere(target_grid, config::JRA55RYFConfig; coverage)
+    regrid_atmosphere(target_grid, config::JRA55RYFConfig; coverage)
 
 Regrid the subset onto a regular lon/lat grid and write the prepared file the simulation reads.
 
@@ -152,7 +198,7 @@ Regrid the subset onto a regular lon/lat grid and write the prepared file the si
 window at the source's 3-hour spacing, both ends included, each record taken from the matching
 position in the RYF year. Returns `(; output_file, times, variables)`.
 """
-function FjordSim.prepare_atmosphere(target_grid, config::JRA55RYFConfig; coverage = nothing)
+function Atmospheres.regrid_atmosphere(target_grid, config::JRA55RYFConfig; coverage = nothing)
     isnothing(coverage) && error("JRA55 repeat-year data needs a simulation window to date its records")
     longitude, latitude = atmosphere_target_axes(target_grid, config)
 
@@ -195,7 +241,7 @@ function FjordSim.prepare_atmosphere(target_grid, config::JRA55RYFConfig; covera
             defVar(ds, name, Float32, ("lon", "lat", "time");
                 chunksizes = [Nx, Ny, 1],
                 deflatelevel = JRA55_DEFLATE_LEVEL,
-                attrib = ["_FillValue" => NaN32; FjordSim.Atmospheres.atmosphere_variable_attributes(name)])
+                attrib = ["_FillValue" => NaN32; atmosphere_variable_attributes(name)])
         end
 
         for (time_index, date) in enumerate(times)
@@ -215,15 +261,51 @@ function FjordSim.prepare_atmosphere(target_grid, config::JRA55RYFConfig; covera
     return (; output_file, times, variables)
 end
 
-FjordSim.prescribed_atmosphere(config::JRA55RYFConfig, architecture; reference_date = nothing) =
+Atmospheres.prescribed_atmosphere(config::JRA55RYFConfig, architecture; reference_date = nothing) =
     NORA3PrescribedAtmosphere(architecture; dataset = MultiYearNORA3(config), reference_date)
 
-FjordSim.prescribed_radiation(config::JRA55RYFConfig, architecture; reference_date = nothing) =
+Atmospheres.prescribed_radiation(config::JRA55RYFConfig, architecture; reference_date = nothing) =
     NORA3PrescribedRadiation(architecture; dataset = MultiYearNORA3(config), reference_date)
 
-function FjordSim.atmosphere_date_range(config::JRA55RYFConfig)
+function Atmospheres.atmosphere_date_range(config::JRA55RYFConfig)
     return NCDataset(atmosphere_path(config)) do ds
         times = ds["time"][:]
         return (DateTime(first(times)), DateTime(last(times)))
     end
+end
+
+# --- Run as a script ---------------------------------------------------------------------------
+
+# The run window the prepared file must span: the Aniva setup's `start_date` and
+# `start_date + stop_time`. Re-run this script after changing either there.
+const START_DATE = DateTime(2023, 1, 1)
+const STOP_DATE = DateTime(2024, 1, 1)
+const BATHYMETRY_FILE = "bathymetry_aniva.nc"
+
+"""
+    prepare_jra55_atmosphere_aniva()
+
+Subset and regrid JRA55 RYF for the domain of `bathymetry_aniva.nc` over `START_DATE` to
+`STOP_DATE`, writing `atmosphere_aniva.nc` and its plot under `fjord_data_root("aniva")`.
+"""
+function prepare_jra55_atmosphere_aniva()
+    data_root = fjord_data_root("aniva")
+    config = JRA55RYFConfig(data_root = data_root)
+
+    bathymetry_file = joinpath(data_root, BATHYMETRY_FILE)
+    isfile(bathymetry_file) || error("$bathymetry_file does not exist; run prepare_bathymetry_aniva.jl first.")
+    target_grid = FjordSim.Grids.ImmersedBoundaryGrid(bathymetry_file, CPU(), (1, 1, 1)).underlying_grid
+    @info "Domain of $(BATHYMETRY_FILE): $(x_domain(target_grid))°E, $(y_domain(target_grid))°N"
+
+    Atmospheres.fetch_atmosphere(target_grid, config)
+    result = Atmospheres.regrid_atmosphere(target_grid, config; coverage = (START_DATE, STOP_DATE))
+    plot_file = plot_atmosphere(config, result.output_file)
+
+    @info "Atmosphere file saved to $(result.output_file)"
+    @info "Atmosphere plot saved to $plot_file"
+    return result.output_file
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    prepare_jra55_atmosphere_aniva()
 end
