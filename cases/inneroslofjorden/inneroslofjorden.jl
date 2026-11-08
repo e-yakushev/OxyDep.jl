@@ -24,27 +24,24 @@ const INNEROSLOFJORDEN_UNIFORM_INITIAL_CONDITIONS = (
 """
     initial_conditions_for_run(source, uniform; results_directory)
 
-The initial state a run starts from, chosen by `source`:
-
-- `:uniform`: `uniform`, a `NamedTuple` of constants.
-- `:results`: the last record of the newest `snapshots_ocean_*.nc` in `results_directory`, a
-  previous run's output. Only the state is read — T, S, u, v and every other model tracer the file
-  carries; the clock still starts at the run's own `start_date`, and η and CATKE's `e` start from
-  rest, so this is a warm start rather than a continuation.
+`uniform` for `source == :uniform`. For `source == :results`, a `FromResults` of the newest
+run-tagged `snapshots_ocean_*.nc` in `results_directory`.
 """
-function initial_conditions_for_run(source::Symbol, uniform; results_directory)
-    source === :uniform && return uniform
-    source === :results || throw(ArgumentError(
-        "The initial-conditions source must be :uniform or :results, got :$source",
-    ))
+function initial_conditions_for_run(source, uniform; results_directory)
+    source == :uniform && return uniform
+    source == :results || error(
+        "initial_conditions_source must be :uniform or :results, got $(repr(source))",
+    )
 
-    isdir(results_directory) || error("No results directory $results_directory to start from.")
-    # Run tags are timestamps, so the newest file sorts last.
-    snapshots = sort(filter(
-        name -> startswith(name, "snapshots_ocean_") && endswith(name, ".nc"),
-        readdir(results_directory),
-    ))
-    isempty(snapshots) && error("No snapshots_ocean_*.nc in $results_directory to start from.")
+    isdir(results_directory) || error(
+        "No results directory $results_directory; run the first year before selecting :results.",
+    )
+    snapshot_pattern = r"^snapshots_ocean_\d{8}T\d{6}(?:_loop\d+)?\.nc$"
+    snapshots = sort(filter(name -> occursin(snapshot_pattern, name), readdir(results_directory)))
+    isempty(snapshots) && error(
+        "No run-tagged snapshots_ocean_*.nc found in $results_directory. " *
+        "Run the first year before selecting :results.",
+    )
     return FromResults(joinpath(results_directory, last(snapshots)))
 end
 
@@ -166,8 +163,8 @@ function inneroslofjorden(;
                     HorizontalScalarBiharmonicDiffusivity(FT; ν = 1e5, κ = 0),
                 ),
                 width_cells = 16,
-                viscosity   = 70.0,
-                diffusivity = 35.0,
+                viscosity   = 70.0, #100.0,
+                diffusivity = 35.0, #50.0,
             ),
             # T and S upwinded horizontally within three cells (WENO5's stencil) of every river
             # column, so no face reconstructs across a mouth's fresh front, and salinity's WENO

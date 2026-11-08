@@ -7,7 +7,14 @@ using Oceananigans.Utils: maybe_int
 # Number of seconds in a day (for time conversion)
 const days = 24 * 60 * 60
 
-export prettydays,
+# Distinct colors so dry land reads differently from zero/minimum concentration
+# water cells: land is drawn through `nan_color`, zero/minimum through `lowclip`.
+const LAND_COLOR = :silver
+const ZERO_COLOR = :black
+
+export LAND_COLOR,
+       ZERO_COLOR,
+       prettydays,
        replace_zeros_with_NaN!,
        get_interior,
        plot_ztime,
@@ -144,21 +151,27 @@ function plot_param_transect(Par_transect_slice, title_str, depth, transect, fol
     if any(.!nan_mask)
         valid_data = data_plot[.!nan_mask]
         vmin, vmax = extrema(valid_data)
-        offset = 0.1 * abs(vmax - vmin)
-        data_plot[nan_mask] .= vmin - offset
 
         cr = isnothing(colorrange) ? (vmin, vmax) : colorrange
+        # Land cells stay NaN (drawn with `nan_color`); water cells at or below the
+        # scale minimum drop under the range so `lowclip` paints them `ZERO_COLOR`.
+        cmin = first(cr)
+        sentinel = cmin - (abs(cmin) + one(cmin))
+        @. data_plot = ifelse(isnan(data_plot), NaN,
+                              ifelse(data_plot <= cmin, sentinel, data_plot))
+
         hm = heatmap!(ax, dist, depth, data_plot;
                       colorrange=cr,
                       colormap=colormap,
                       interpolate=false,
-                      nan_color=:silver)
+                      nan_color=LAND_COLOR,
+                      lowclip=ZERO_COLOR)
     else
-        data_plot .= 0.0
-        hm = heatmap!(ax, dist, depth, data_plot;
+        hm = heatmap!(ax, dist, depth, fill(NaN, size(data_plot));
                       colorrange=(0.0, 1.0),
-                      colormap=[:silver],
-                      interpolate=false)
+                      colormap=colormap,
+                      interpolate=false,
+                      nan_color=LAND_COLOR)
     end
 
     if whiteline != 0.0
@@ -425,7 +438,8 @@ end
 # ----------------------------------------------------------
 
 function plot_tracer_subplot_map!(fig, pos, data, title_str, longitudes, latitudes;
-                                  colorrange=(0, 1), colormap=:viridis, whiteline=1.0)
+                                  colorrange=(0, 1), colormap=:viridis, whiteline=1.0,
+                                  land_color=LAND_COLOR, zero_color=ZERO_COLOR)
     ni, nj = size(data)
     # Re-interpolate coordinate ranges when data dimensions differ (staggered u/v grids)
     if length(longitudes) != ni
@@ -439,8 +453,19 @@ function plot_tracer_subplot_map!(fig, pos, data, title_str, longitudes, latitud
               width=180, height=300,
               xlabel="Longitude (°E)", ylabel="Latitude (°N)")
 
-    hm = heatmap!(ax, longitudes, latitudes, data;
-                  colorrange=colorrange, colormap=colormap, nan_color=:silver)
+    # Land cells arrive as NaN (drawn with `nan_color`); push water cells at or below
+    # the scale minimum under the range so `lowclip` paints them `zero_color`.
+    plotdata = Float64.(data)
+    if colorrange !== nothing
+        cmin = first(colorrange)
+        sentinel = cmin - (abs(cmin) + one(cmin))
+        @. plotdata = ifelse(isnan(plotdata), NaN,
+                             ifelse(plotdata <= cmin, sentinel, plotdata))
+    end
+
+    hm = heatmap!(ax, longitudes, latitudes, plotdata;
+                  colorrange=colorrange, colormap=colormap,
+                  nan_color=land_color, lowclip=zero_color)
 
     if whiteline != 0.0
         contour!(ax, longitudes, latitudes, data;
@@ -454,7 +479,7 @@ end
 # Bottom slices for all tracers at one day
 # ----------------------------------------------------------
 
-function bottom_slices_at_day(T, S, O₂, P, HET, O₂_sat, DOM, POM, NUT, bottom_z, day_index)
+function bottom_slices_at_day(T, S, O₂, P, HET, O₂_sat, DOM, POM, NUT, bottom_z, day_index, water_mask=nothing)
     nx, ny, _, _ = size(O₂)
 
     T_slice_bot      = Array{Float64}(undef, nx, ny)
@@ -469,26 +494,44 @@ function bottom_slices_at_day(T, S, O₂, P, HET, O₂_sat, DOM, POM, NUT, botto
 
     for i in 1:nx, j in 1:ny
         z = bottom_z[i, j]
-        T_slice_bot[i, j]      = Float64(T[i, j, z, day_index])
-        S_slice_bot[i, j]      = Float64(S[i, j, z, day_index])
-        O₂_slice_bot[i, j]     = Float64(O₂[i, j, z, day_index])
-        P_slice_bot[i, j]      = Float64(P[i, j, z, day_index])
-        HET_slice_bot[i, j]    = Float64(HET[i, j, z, day_index])
-        O₂_sat_slice_bot[i, j] = Float64(O₂_sat[i, j, z, day_index])
-        DOM_slice_bot[i, j]    = Float64(DOM[i, j, z, day_index])
-        POM_slice_bot[i, j]    = Float64(POM[i, j, z, day_index])
-        NUT_slice_bot[i, j]    = Float64(NUT[i, j, z, day_index])
+        # Dry columns (no water anywhere) become NaN so land stays distinct from a
+        # water cell whose bottom concentration is genuinely zero.
+        dry = water_mask === nothing ? false : !any(@view water_mask[i, j, :])
+        if dry
+            T_slice_bot[i, j]      = NaN
+            S_slice_bot[i, j]      = NaN
+            O₂_slice_bot[i, j]     = NaN
+            P_slice_bot[i, j]      = NaN
+            HET_slice_bot[i, j]    = NaN
+            O₂_sat_slice_bot[i, j] = NaN
+            DOM_slice_bot[i, j]    = NaN
+            POM_slice_bot[i, j]    = NaN
+            NUT_slice_bot[i, j]    = NaN
+        else
+            T_slice_bot[i, j]      = Float64(T[i, j, z, day_index])
+            S_slice_bot[i, j]      = Float64(S[i, j, z, day_index])
+            O₂_slice_bot[i, j]     = Float64(O₂[i, j, z, day_index])
+            P_slice_bot[i, j]      = Float64(P[i, j, z, day_index])
+            HET_slice_bot[i, j]    = Float64(HET[i, j, z, day_index])
+            O₂_sat_slice_bot[i, j] = Float64(O₂_sat[i, j, z, day_index])
+            DOM_slice_bot[i, j]    = Float64(DOM[i, j, z, day_index])
+            POM_slice_bot[i, j]    = Float64(POM[i, j, z, day_index])
+            NUT_slice_bot[i, j]    = Float64(NUT[i, j, z, day_index])
+        end
     end
 
-    @. T_slice_bot      = ifelse(T_slice_bot == 0, NaN, T_slice_bot)
-    @. S_slice_bot      = ifelse(S_slice_bot == 0, NaN, S_slice_bot)
-    @. O₂_slice_bot     = ifelse(O₂_slice_bot == 0, NaN, O₂_slice_bot)
-    @. P_slice_bot      = ifelse(P_slice_bot == 0, NaN, P_slice_bot)
-    @. HET_slice_bot    = ifelse(HET_slice_bot == 0, NaN, HET_slice_bot)
-    @. O₂_sat_slice_bot = ifelse(O₂_sat_slice_bot == 0, NaN, O₂_sat_slice_bot)
-    @. DOM_slice_bot    = ifelse(DOM_slice_bot == 0, NaN, DOM_slice_bot)
-    @. POM_slice_bot    = ifelse(POM_slice_bot == 0, NaN, POM_slice_bot)
-    @. NUT_slice_bot    = ifelse(NUT_slice_bot == 0, NaN, NUT_slice_bot)
+    # Legacy fallback (no water mask): a zero bottom value marks land, per tracer.
+    if water_mask === nothing
+        @. T_slice_bot      = ifelse(T_slice_bot == 0, NaN, T_slice_bot)
+        @. S_slice_bot      = ifelse(S_slice_bot == 0, NaN, S_slice_bot)
+        @. O₂_slice_bot     = ifelse(O₂_slice_bot == 0, NaN, O₂_slice_bot)
+        @. P_slice_bot      = ifelse(P_slice_bot == 0, NaN, P_slice_bot)
+        @. HET_slice_bot    = ifelse(HET_slice_bot == 0, NaN, HET_slice_bot)
+        @. O₂_sat_slice_bot = ifelse(O₂_sat_slice_bot == 0, NaN, O₂_sat_slice_bot)
+        @. DOM_slice_bot    = ifelse(DOM_slice_bot == 0, NaN, DOM_slice_bot)
+        @. POM_slice_bot    = ifelse(POM_slice_bot == 0, NaN, POM_slice_bot)
+        @. NUT_slice_bot    = ifelse(NUT_slice_bot == 0, NaN, NUT_slice_bot)
+    end
 
     return T_slice_bot, S_slice_bot, O₂_slice_bot,
            P_slice_bot, HET_slice_bot, O₂_sat_slice_bot,
@@ -499,6 +542,28 @@ end
 # Movies: horizontal and bottom
 # ----------------------------------------------------------
 
+# A cell is dry land if the tracer stays exactly zero across every frame; a water
+# cell is nonzero at least once over the record. `get_slice(n)` returns frame n.
+function static_land_mask(get_slice, Nt)
+    mask = get_slice(1) .== 0
+    for n in 2:Nt
+        mask .&= (get_slice(n) .== 0)
+    end
+    return mask
+end
+
+# Land cells become NaN (drawn with `nan_color`); water cells at or below the scale
+# minimum drop under the range so `lowclip` paints them the zero color.
+function mark_land_and_zero!(slice, land_mask, colorrange)
+    cmin = first(colorrange)
+    sentinel = cmin - (abs(cmin) + one(cmin))
+    @inbounds for idx in eachindex(slice)
+        slice[idx] = ifelse(land_mask[idx], NaN,
+                     ifelse(slice[idx] <= cmin, sentinel, slice[idx]))
+    end
+    return slice
+end
+
 function record_horizontal_tracer(tracer, times, folder, name, label,
                                   longitudes, latitudes;
                                   colorrange=(-1, 30), colormap=:magma,
@@ -506,18 +571,15 @@ function record_horizontal_tracer(tracer, times, folder, name, label,
     dt_days = (times[2] - times[1]) / 86400.0  # snapshot interval in days
     framerate = max(1, round(Int, speed / dt_days))
     Nt = length(times)
+
+    get_slice(n) =
+        tracer isa FieldTimeSeries ? Float64.(interior(tracer[n], :, :, iz)) :
+        tracer isa AbstractArray   ? Float64.(tracer[:, :, iz, n]) :
+        error("Unsupported tracer type: $(typeof(tracer))")
+    land_mask = static_land_mask(get_slice, Nt)
+
     iter = Observable(1)
-    Ti = @lift begin
-        if tracer isa AbstractArray
-            Ti = tracer[:, :, iz, $iter]
-        elseif tracer isa FieldTimeSeries
-            Ti = interior(tracer[$iter], :, :, iz)
-        else
-            error("Unsupported tracer type: $(typeof(tracer))")
-        end
-        Ti[Ti .== 0] .= NaN
-        Ti
-    end
+    Ti = @lift mark_land_and_zero!(get_slice($iter), land_mask, colorrange)
     title = @lift "$label at $(prettydays(times[$iter]))"
 
     fig = Figure(size=(400, 550), fontsize=20)
@@ -525,7 +587,7 @@ function record_horizontal_tracer(tracer, times, folder, name, label,
                xlabel="Longitude (°E)", ylabel="Latitude (°N)")
     hm  = heatmap!(ax, longitudes, latitudes, Ti,
                    colorrange=colorrange, colormap=colormap,
-                   nan_color=:silver)
+                   nan_color=LAND_COLOR, lowclip=ZERO_COLOR)
     Colorbar(fig[0, 1], hm, vertical=false)
 
     record(fig, joinpath(folder, "movie_$(name)_iz_$iz.gif"), 1:Nt,
@@ -541,6 +603,7 @@ function record_bottom_tracer(variable, var_name, Nz, times, folder,
                               figsize=(1000, 400), speed=3.0)
     dt_days = (times[2] - times[1]) / 86400.0  # snapshot interval in days
     framerate = max(1, round(Int, speed / dt_days))
+    Nt = length(times)
     bottom_z = ones(Int, size(variable, 1), size(variable, 2))
     for i = 1:size(variable, 1)
         for j = 1:size(variable, 2)
@@ -556,23 +619,22 @@ function record_bottom_tracer(variable, var_name, Nz, times, folder,
         end
     end
 
+    bottom_slice(n) = [Float64(variable[i, j, bottom_z[i, j], n])
+                       for i in 1:size(variable, 1), j in 1:size(variable, 2)]
+    land_mask = static_land_mask(bottom_slice, Nt)
+
     iter = Observable(1)
-    f = @lift begin
-        x = [variable[i, j, bottom_z[i, j], $iter]
-             for i in 1:size(variable, 1), j in 1:size(variable, 2)]
-        x[x .== 0] .= NaN
-        x
-    end
+    f = @lift mark_land_and_zero!(bottom_slice($iter), land_mask, colorrange)
 
     title = @lift "bottom $(var_name), μM at " * prettydays(times[$iter])
     fig = Figure(size=figsize)
     ax  = Axis(fig[1, 1]; title=title,
                xlabel="Longitude (°E)", ylabel="Latitude (°N)")
     hm  = heatmap!(ax, longitudes, latitudes, f,
-                   colorrange=colorrange, colormap=colormap)
+                   colorrange=colorrange, colormap=colormap,
+                   nan_color=LAND_COLOR, lowclip=ZERO_COLOR)
     Colorbar(fig[0, 1], hm, vertical=false, label="$(var_name), μM")
 
-    Nt = length(times)
     record(fig, joinpath(folder, "movie_$(var_name).gif"), 1:Nt,
            framerate=framerate) do i
         iter[] = i
@@ -620,6 +682,16 @@ function plot_six_animations_365_days(tracers, times_seconds, folder, labels, lo
     axes_vec     = Any[]
     heatmaps_vec = Any[]
 
+    # Static land mask per tracer over the selected frames: a cell is land only if it
+    # stays exactly zero in every frame, keeping it distinct from zero-value water.
+    land_masks = Any[]
+    for i in 1:6
+        tracer_data = tracers[i]
+        ndims(tracer_data) == 4 || error("Expected 4D array, got $(ndims(tracer_data))D")
+        get_slice(n) = Float64.(tracer_data[:, :, iz, day_indices[n]])
+        push!(land_masks, static_land_mask(get_slice, Nt))
+    end
+
     for i in 1:6
         row = ((i - 1) ÷ 3) + 1
         col = ((i - 1) % 3) + 1
@@ -632,20 +704,14 @@ function plot_six_animations_365_days(tracers, times_seconds, folder, labels, lo
         Ti = @lift begin
             tracer_data = tracers[i]
             frame_idx   = day_indices[$day_iter]
-            if ndims(tracer_data) == 4
-                Ti_val = tracer_data[:, :, iz, frame_idx]
-            else
-                error("Expected 4D array, got $(ndims(tracer_data))D")
-            end
-            Ti_val = Float64.(Ti_val)
-            Ti_val[Ti_val .== 0] .= NaN
-            Ti_val
+            Ti_val = Float64.(tracer_data[:, :, iz, frame_idx])
+            mark_land_and_zero!(Ti_val, land_masks[i], colorranges[i])
         end
 
         hm = heatmap!(ax, longitudes, latitudes, Ti,
                       colorrange=colorranges[i],
                       colormap=colormaps[i],
-                      nan_color=:white)
+                      nan_color=LAND_COLOR, lowclip=ZERO_COLOR)
         Colorbar(fig[row, col*2], hm, width=20, label="")
         push!(axes_vec, ax)
         push!(heatmaps_vec, hm)

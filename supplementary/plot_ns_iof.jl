@@ -19,12 +19,12 @@ import .plot_nc_stuff: prettydays, replace_zeros_with_NaN!, get_interior,
        plot_tracer_subplot_map!, bottom_slices_at_day, oxygen_saturation,
        record_horizontal_tracer, record_bottom_tracer, 
        get_365_days_indices, plot_six_animations_365_days,
-       prepare_six_animations
+       prepare_six_animations, LAND_COLOR, ZERO_COLOR
 
 # ===================== MAIN CODE STARTS HERE =====================
 base_dir = dirname(@__DIR__)
 folder = joinpath(homedir(), "FjordSim_results", "inneroslofjorden_oxydep")
-filename = joinpath(folder, "snapshots_ocean_20261103T150753.nc")   
+filename = joinpath(folder, "snapshots_ocean_20261106T211504.nc")   
 #folder = joinpath(base_dir, "data", "output", "inner_oslofjord_fine")
 #filename = joinpath(folder, "snapshots_ocean_fine")
 
@@ -249,6 +249,28 @@ function transect_distances(transect)
     return dist
 end
 
+# Mask only dry land to NaN, keeping water-cell zeros as their value, so land and
+# zero/minimum concentration can be drawn in different colors.
+function mask_land_slice(A, depth_index, day_index, water_mask)
+    slice = Float64.(view(A, :, :, depth_index, day_index))
+    @. slice = ifelse(water_mask[:, :, depth_index], slice, NaN)
+    return slice
+end
+
+# Same for a vertical transect: cells below the sea floor become NaN (land), while
+# water cells keep their value so a genuine zero stays separable from land.
+function mask_transect_land!(slice, transect, water_mask)
+    Nz = size(slice, 2)
+    for (n, (_, i, j, _)) in enumerate(transect)
+        @inbounds for k in 1:Nz
+            if !water_mask[i, j, k]
+                slice[n, k] = NaN
+            end
+        end
+    end
+    return slice
+end
+
 velocity_magnitude(u_data, v_data) = sqrt.(u_data .^ 2 .+ v_data .^ 2)
 
 function center_velocity_slices(u_slice, v_slice, nx, ny)
@@ -342,7 +364,7 @@ function plot_velocity_subplot_map!(fig, pos, speed, u_slice, v_slice, title_str
               xlabel="Longitude (°E)", ylabel="Latitude (°N)")
 
     hm = heatmap!(ax, longitudes, latitudes, speed;
-                  colorrange=colorrange, colormap=colormap, nan_color=:silver)
+                  colorrange=colorrange, colormap=colormap, nan_color=LAND_COLOR)
 
     i_inds = 1:arrow_stride:ni
     j_inds = 1:arrow_stride:nj
@@ -370,29 +392,36 @@ function plot_transect_panel!(fig, pos, data, spec, depth, dist)
                 xlabel = pos[1] == 2 ? "Distance along transect (km)" : "",
                 ylabel = pos[2] == 1 ? "Depth (m)" : "")
 
-    data_plot = copy(data)
-    nan_mask = isnan.(data_plot)
-    finite_data = data_plot[.!nan_mask]
+    land_mask = isnan.(data)
+    finite_data = data[.!land_mask]
     if isempty(finite_data)
-        data_plot .= 0.0
-        heatmap!(axis, dist, depth, data_plot;
-                 colorrange = (0.0, 1.0), colormap = [:silver], interpolate = false)
+        heatmap!(axis, dist, depth, fill(NaN, size(data));
+                 colorrange = (0.0, 1.0), colormap = spec.colormap,
+                 interpolate = false, nan_color = LAND_COLOR)
         return nothing
     end
 
     minimum_value, maximum_value = extrema(finite_data)
-    offset = 0.1 * max(abs(maximum_value - minimum_value), eps(Float64))
-    data_plot[nan_mask] .= minimum_value - offset
     colorrange = isnothing(spec.colorrange) ? (minimum_value, maximum_value) : spec.colorrange
+
+    # Land cells stay NaN (drawn with `nan_color`); water cells at or below the scale
+    # minimum drop under the range so `lowclip` paints them `ZERO_COLOR`.
+    cmin = first(colorrange)
+    sentinel = cmin - (abs(cmin) + one(cmin))
+    data_plot = copy(data)
+    @. data_plot = ifelse(isnan(data_plot), NaN,
+                          ifelse(data_plot <= cmin, sentinel, data_plot))
+
     hm = heatmap!(axis, dist, depth, data_plot;
                   colorrange = colorrange,
                   colormap = spec.colormap,
                   interpolate = false,
-                  nan_color = :silver)
+                  nan_color = LAND_COLOR,
+                  lowclip = ZERO_COLOR)
 
     if spec.whiteline != 0.0
         contour_data = copy(data)
-        contour_data[nan_mask] .= spec.whiteline + 1000.0
+        contour_data[land_mask] .= spec.whiteline + 1000.0
         contour!(axis, dist, depth, contour_data;
                  levels = [spec.whiteline], color = :white,
                  linewidth = 2, linestyle = :dot)
@@ -691,16 +720,16 @@ for plot_day in plot_dates
         println("Plotting full map figure for day $plot_day ...")
         ####################
         # vertical TRANSECTS
-        T_transect = vert_transect_slice(T, transect, day_index, Nz)
-        S_transect = vert_transect_slice(S, transect, day_index, Nz)
-        Vel_transect = velocity_transect_slice(u, v, transect, day_index, Nz)
-        e_transect = vert_transect_slice(e, transect, day_index, Nz)
-        O2_slice = vert_transect_slice(O₂, transect, day_index, Nz)
-        NUT_slice = vert_transect_slice(NUT, transect, day_index, Nz)
-        P_slice = vert_transect_slice(P, transect, day_index, Nz)
-        HET_slice = vert_transect_slice(HET, transect, day_index, Nz)
-        POM_slice = vert_transect_slice(POM, transect, day_index, Nz)
-        DOM_slice = vert_transect_slice(DOM, transect, day_index, Nz)
+        T_transect = mask_transect_land!(vert_transect_slice(T, transect, day_index, Nz), transect, water_mask)
+        S_transect = mask_transect_land!(vert_transect_slice(S, transect, day_index, Nz), transect, water_mask)
+        Vel_transect = mask_transect_land!(velocity_transect_slice(u, v, transect, day_index, Nz), transect, water_mask)
+        e_transect = mask_transect_land!(vert_transect_slice(e, transect, day_index, Nz), transect, water_mask)
+        O2_slice = mask_transect_land!(vert_transect_slice(O₂, transect, day_index, Nz), transect, water_mask)
+        NUT_slice = mask_transect_land!(vert_transect_slice(NUT, transect, day_index, Nz), transect, water_mask)
+        P_slice = mask_transect_land!(vert_transect_slice(P, transect, day_index, Nz), transect, water_mask)
+        HET_slice = mask_transect_land!(vert_transect_slice(HET, transect, day_index, Nz), transect, water_mask)
+        POM_slice = mask_transect_land!(vert_transect_slice(POM, transect, day_index, Nz), transect, water_mask)
+        DOM_slice = mask_transect_land!(vert_transect_slice(DOM, transect, day_index, Nz), transect, water_mask)
         plot_transect_sheet(folder, plot_day, depth, transect, (
             T = T_transect,
             S = S_transect,
@@ -715,22 +744,22 @@ for plot_day in plot_dates
         ))
            
     if Ci_
-        Ci_free_slice = vert_transect_slice(Ci_free, transect, day_index, Nz)
+        Ci_free_slice = mask_transect_land!(vert_transect_slice(Ci_free, transect, day_index, Nz), transect, water_mask)
         _ = plot_param_transect(Ci_free_slice, PLOT[:Ci_free].label, depth, transect, folder;
                                 colormap=PLOT[:Ci_free].colormap, day_index=plot_day, whiteline=PLOT[:Ci_free].whiteline, colorrange=PLOT[:Ci_free].colorrange)
-        Ci_DOM_slice = vert_transect_slice(Ci_DOM, transect, day_index, Nz)
+        Ci_DOM_slice = mask_transect_land!(vert_transect_slice(Ci_DOM, transect, day_index, Nz), transect, water_mask)
         _ = plot_param_transect(Ci_DOM_slice, PLOT[:Ci_DOM].label, depth, transect, folder;
                                 colormap=PLOT[:Ci_DOM].colormap, day_index=plot_day, whiteline=PLOT[:Ci_DOM].whiteline, colorrange=PLOT[:Ci_DOM].colorrange)
         Ci_diss_slice = Ci_free_slice .+ Ci_DOM_slice
         _ = plot_param_transect(Ci_diss_slice, PLOT[:Ci_float].label, depth, transect, folder;
                                 colormap=PLOT[:Ci_float].colormap, day_index=plot_day, whiteline=PLOT[:Ci_float].whiteline, colorrange=PLOT[:Ci_float].colorrange)
-        Ci_PHY_slice = vert_transect_slice(Ci_PHY, transect, day_index, Nz)
+        Ci_PHY_slice = mask_transect_land!(vert_transect_slice(Ci_PHY, transect, day_index, Nz), transect, water_mask)
         _ = plot_param_transect(Ci_PHY_slice, PLOT[:Ci_PHY].label, depth, transect, folder;
                                 colormap=PLOT[:Ci_PHY].colormap, day_index=plot_day, whiteline=PLOT[:Ci_PHY].whiteline, colorrange=PLOT[:Ci_PHY].colorrange)
-        Ci_HET_slice = vert_transect_slice(Ci_HET, transect, day_index, Nz)
+        Ci_HET_slice = mask_transect_land!(vert_transect_slice(Ci_HET, transect, day_index, Nz), transect, water_mask)
         _ = plot_param_transect(Ci_HET_slice, PLOT[:Ci_HET].label, depth, transect, folder;
                                 colormap=PLOT[:Ci_HET].colormap, day_index=plot_day, whiteline=PLOT[:Ci_HET].whiteline, colorrange=PLOT[:Ci_HET].colorrange)
-        Ci_POM_slice = vert_transect_slice(Ci_POM, transect, day_index, Nz)
+        Ci_POM_slice = mask_transect_land!(vert_transect_slice(Ci_POM, transect, day_index, Nz), transect, water_mask)
         _ = plot_param_transect(Ci_POM_slice, PLOT[:Ci_POM].label, depth, transect, folder;
                                 colormap=PLOT[:Ci_POM].colormap, day_index=plot_day, whiteline=PLOT[:Ci_POM].whiteline, colorrange=PLOT[:Ci_POM].colorrange)
         Ci_part_slice = Ci_PHY_slice .+ Ci_HET_slice .+ Ci_POM_slice
@@ -740,23 +769,23 @@ for plot_day in plot_dates
 
         ####################
         # horizontal slices for maps
-        T_slice      = replace_zeros_with_NaN!(T, depth_index, day_index)
-        S_slice      = replace_zeros_with_NaN!(S, depth_index, day_index)
-        O₂_slice     = replace_zeros_with_NaN!(O₂, depth_index, day_index)
-        NUT_slice    = replace_zeros_with_NaN!(NUT, depth_index, day_index)
-        P_slice      = replace_zeros_with_NaN!(P, depth_index, day_index)
-        HET_slice    = replace_zeros_with_NaN!(HET, depth_index, day_index)
-        DOM_slice    = replace_zeros_with_NaN!(DOM, depth_index, day_index)
-        POM_slice    = replace_zeros_with_NaN!(POM, depth_index, day_index)
-        O₂_sat_slice = replace_zeros_with_NaN!(O₂_sat, depth_index, day_index)
+        T_slice      = mask_land_slice(T, depth_index, day_index, water_mask)
+        S_slice      = mask_land_slice(S, depth_index, day_index, water_mask)
+        O₂_slice     = mask_land_slice(O₂, depth_index, day_index, water_mask)
+        NUT_slice    = mask_land_slice(NUT, depth_index, day_index, water_mask)
+        P_slice      = mask_land_slice(P, depth_index, day_index, water_mask)
+        HET_slice    = mask_land_slice(HET, depth_index, day_index, water_mask)
+        DOM_slice    = mask_land_slice(DOM, depth_index, day_index, water_mask)
+        POM_slice    = mask_land_slice(POM, depth_index, day_index, water_mask)
+        O₂_sat_slice = mask_land_slice(O₂_sat, depth_index, day_index, water_mask)
         Vel_slice, u_slice, v_slice = velocity_slice(u, v, depth_index, day_index)
 
         if Ci_
-            Ci_free_slice = replace_zeros_with_NaN!(Ci_free, depth_index, day_index)
-            Ci_DOM_slice  = replace_zeros_with_NaN!(Ci_DOM, depth_index, day_index)
-            Ci_PHY_slice  = replace_zeros_with_NaN!(Ci_PHY, depth_index, day_index)
-            Ci_POM_slice  = replace_zeros_with_NaN!(Ci_POM, depth_index, day_index)
-            Ci_HET_slice  = replace_zeros_with_NaN!(Ci_HET, depth_index, day_index)
+            Ci_free_slice = mask_land_slice(Ci_free, depth_index, day_index, water_mask)
+            Ci_DOM_slice  = mask_land_slice(Ci_DOM, depth_index, day_index, water_mask)
+            Ci_PHY_slice  = mask_land_slice(Ci_PHY, depth_index, day_index, water_mask)
+            Ci_POM_slice  = mask_land_slice(Ci_POM, depth_index, day_index, water_mask)
+            Ci_HET_slice  = mask_land_slice(Ci_HET, depth_index, day_index, water_mask)
         end
 
         ####################
@@ -822,7 +851,7 @@ for plot_day in plot_dates
     T_slice_bot, S_slice_bot, O₂_slice_bot,
     P_slice_bot, HET_slice_bot, O₂_sat_slice_bot,
     DOM_slice_bot, POM_slice_bot, NUT_slice_bot =
-        bottom_slices_at_day(T, S, O₂, P, HET, O₂_sat, DOM, POM, NUT, bottom_z, day_index)
+        bottom_slices_at_day(T, S, O₂, P, HET, O₂_sat, DOM, POM, NUT, bottom_z, day_index, water_mask)
     Vel_slice_bot, u_slice_bot, v_slice_bot = bottom_velocity_slices_at_day(u, v, bottom_z, day_index)
 
     plot_tracer_subplot_map!(fig_b, (1, 1), T_slice_bot, PLOT[:T].label,      real_lon, real_lat;
@@ -906,7 +935,7 @@ if maps_animations_
 
     record_bottom_tracer(O₂, "O2_bottom", Nz, times, folder,
                         real_lon, real_lat;
-                        colorrange=(-1, 350), colormap=PLOT[:O2].colormap, figsize=(400, 550), speed=animation_speed)
+                        colorrange=(0, 350), colormap=PLOT[:O2].colormap, figsize=(400, 550), speed=animation_speed)
 end
 ##########################################
 #-------Six animation in 1 figure---------

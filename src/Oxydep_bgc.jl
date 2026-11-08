@@ -13,8 +13,9 @@ This file is organized: pure BGC code first, then Ci_ additions (when enabled).
 
 # Limiting equations and switches
 @inline yy(consta, value) = value^2 / (value^2 + consta^2)   #This is a squared Michaelis-Menten type of limiter
-@inline F_ox(conc, threshold) = (0.5 + 0.5 * tanh(conc - threshold))
-@inline F_subox(conc, threshold) = (0.5 - 0.5 * tanh(conc - threshold))
+# Transition width is half the threshold, so the switch spreads smoothly with O₂ scale.
+@inline F_ox(conc, threshold) = (0.5 + 0.5 * tanh((conc - threshold) / (threshold / 2)))
+@inline F_subox(conc, threshold) = (0.5 - 0.5 * tanh((conc - threshold) / (threshold / 2)))
 
 # P
 @inline LimLight(PAR, Iopt) = PAR / Iopt * exp(1.0 - PAR / Iopt)  #!Dependence of P growth on Light (Steel)
@@ -356,7 +357,7 @@ end
     bottom = _is_seafloor(i, j, k, grid)
     O₂ = @inbounds fields.O₂[i, j, k]
     flux = O₂ ≤ 0 ? zero(O₂) : -(F_ox(O₂, p.O2_suboxic) * p.b_O2_ox +
-             F_subox(O₂, p.O2_suboxic) * p.b_O2_subox) / p.Trel
+             F_subox(O₂, p.O2_suboxic) * p.b_O2_subox) * (O₂ / p.O2_suboxic) / p.Trel
     return bottom_tendency(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), O₂)
 end
 
