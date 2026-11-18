@@ -14,8 +14,8 @@ This file is organized: pure BGC code first, then Ci_ additions (when enabled).
 # Limiting equations and switches
 @inline yy(consta, value) = value^2 / (value^2 + consta^2)   #This is a squared Michaelis-Menten type of limiter
 # Transition width is half the threshold, so the switch spreads smoothly with O₂ scale.
-@inline F_ox(conc, threshold) = (0.5 + 0.5 * tanh((conc - threshold) / (threshold / 2)))
-@inline F_subox(conc, threshold) = (0.5 - 0.5 * tanh((conc - threshold) / (threshold / 2)))
+@inline F_ox(conc, threshold) = (0.5 + 0.5 * tanh((conc - threshold) / (threshold / 1.5)))
+@inline F_subox(conc, threshold) = (0.5 - 0.5 * tanh((conc - threshold) / (threshold / 1.5)))
 
 # P
 @inline LimLight(PAR, Iopt) = PAR / Iopt * exp(1.0 - PAR / Iopt)  #!Dependence of P growth on Light (Steel)
@@ -315,7 +315,6 @@ end
 # Pure BGC: sediment/boundary parameters and forcing functions
 # =====================================================================
 
-O2_suboxic = 20.0   # OXY threshold for oxic/suboxic switch (mmol/m3)
 Trel = 86400.        # Relaxation time for sediment exchange (s)
 # positive for flux from water to the sediments:
 b_O2_ox =       5.0  # flux of OXY at SWI, (mmol/m2/d) 
@@ -328,9 +327,11 @@ bu = 0.1            # Burial coefficient (0<bu<1) (nd) 0.001
 windspeed = 5.0       # wind speed 10 m, (m/s)
 
 function apply_sediment_config!(sed::Dict)
-    global O2_suboxic, Trel, b_O2_ox, b_O2_subox
+    haskey(sed, "O2_suboxic") && throw(ArgumentError(
+        "Set O2_suboxic in [O2], not [sediment]; water and sediment use the same threshold.",
+    ))
+    global Trel, b_O2_ox, b_O2_subox
     global b_NUT_ox, b_NUT_subox, b_DOM_ox, b_DOM_subox, bu, windspeed
-    haskey(sed, "O2_suboxic") && (O2_suboxic = sed["O2_suboxic"])
     haskey(sed, "Trel")       && (Trel       = sed["Trel"])
     haskey(sed, "b_O2_ox")    && (b_O2_ox    = sed["b_O2_ox"])
     haskey(sed, "b_O2_subox") && (b_O2_subox = sed["b_O2_subox"])
@@ -357,7 +358,7 @@ end
     bottom = _is_seafloor(i, j, k, grid)
     O₂ = @inbounds fields.O₂[i, j, k]
     flux = O₂ ≤ 0 ? zero(O₂) : -(F_ox(O₂, p.O2_suboxic) * p.b_O2_ox +
-             F_subox(O₂, p.O2_suboxic) * p.b_O2_subox) * (O₂ / p.O2_suboxic) / p.Trel
+             F_subox(O₂, p.O2_suboxic) * p.b_O2_subox) * min(1, O₂ / p.O2_suboxic) / p.Trel
     return bottom_tendency(bottom, flux / Δzᶜᶜᶜ(i, j, k, grid), O₂)
 end
 
@@ -414,7 +415,7 @@ function oxydep_sediment_forcings(biogeochemistry)
     w_HET = biogeochemical_drift_velocity(bgc, Val(:HET)).w
     w_POM = biogeochemical_drift_velocity(bgc, Val(:POM)).w
 
-    sed = (O2_suboxic=Float64(O2_suboxic), Trel=Float64(Trel),
+    sed = (O2_suboxic=Float64(bgc.O2_suboxic), Trel=Float64(Trel),
            b_O2_ox=Float64(b_O2_ox), b_O2_subox=Float64(b_O2_subox),
            b_NUT_ox=Float64(b_NUT_ox), b_NUT_subox=Float64(b_NUT_subox),
            b_DOM_ox=Float64(b_DOM_ox), b_DOM_subox=Float64(b_DOM_subox))

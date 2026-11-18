@@ -6,16 +6,14 @@ using Printf
 using Oceananigans.Units
 using Oceananigans.Utils: maybe_int
 using CairoMakie
-using CairoMakie: heatmap!, contour!, lines!
 using Statistics
 
 # Put the helper code in a separate file:
-include("plot_stuff.jl")
+include("plot_nc_stuff_iof_fine.jl")
 using .plot_nc_stuff
-import .plot_nc_stuff: prettydays, replace_zeros_with_NaN!, raw_slice, mark_water_zeros!,
-       tracer_colorrange, LAND_COLOR, ZERO_COLOR, get_interior,
+import .plot_nc_stuff: prettydays, replace_zeros_with_NaN!, get_interior,
        plot_ztime, plot_param_transect, plot_bottom_depth_map!,
-       compute_pressure_from_depth,
+       compute_transect, compute_pressure_from_depth,
        compute_oxygen_saturation_fields, compute_bottom_index_from_O2,
        vert_transect_slice, make_bottom_depth_and_transect_figure,
        plot_tracer_subplot_map!, bottom_slices_at_day, oxygen_saturation,
@@ -26,32 +24,25 @@ import .plot_nc_stuff: prettydays, replace_zeros_with_NaN!, raw_slice, mark_wate
 # ===================== MAIN CODE STARTS HERE =====================
 base_dir = dirname(@__DIR__)
 folder = joinpath(homedir(), "FjordSim_results", "inneroslofjorden_oxydep")
-snapshot_files = filter(readdir(folder)) do name
-    (startswith(name, "snapshot_ocean") || startswith(name, "snapshots_ocean")) &&
-        endswith(name, ".nc") &&
-        isfile(joinpath(folder, name))
-end
-isempty(snapshot_files) && error("No snapshot_ocean*.nc files found in $folder")
-filename = joinpath(folder, argmax(name -> stat(joinpath(folder, name)).mtime, snapshot_files))
+filename = joinpath(folder, "snapshots_ocean_20261013T164914.nc")   
 #folder = joinpath(base_dir, "data", "output", "inner_oslofjord_fine")
 #filename = joinpath(folder, "snapshots_ocean_fine")
 
 # ===================== PLOTTING CONFIGURATION =====================
 # Map plotting parameters for each tracer (also used for bottom maps and animations)
 const PLOT = Dict(
-    :T       => (label="T [°C]",      colorrange=(0, 20),    colormap=Reverse(:RdYlBu),            whiteline=0.0),
-    :S       => (label="S [psu]",     colorrange=(10, 35),   colormap=:viridis,                    whiteline=0.0),
-    :e       => (label="e [m²/s²]",   colorrange=nothing,    colormap=Reverse(:CMRmap),            whiteline=1.0),
+    :T       => (label="T [°C]",      colorrange=(0, 20),    colormap=Reverse(:RdYlBu),           whiteline=0.0),
+    :S       => (label="S [psu]",     colorrange=(15, 35),   colormap=:viridis,                    whiteline=0.0),
+    :e       => (label="e [m²/s²]",   colorrange=nothing,    colormap=:viridis,                    whiteline=1.0),
     :O2      => (label="O₂ [μM]",     colorrange=(0, 350),   colormap=:turbo,                      whiteline=67.0),
     :O2sat   => (label="O₂ [%]",      colorrange=(0, 150),   colormap=:gist_stern,                 whiteline=100.0),
     :P       => (label="PHY [μM N]",  colorrange=(0, 5),     colormap=Reverse(:cubehelix),         whiteline=0.0),
-    :HET     => (label="HET [μM N]",  colorrange=(0, 1),     colormap=Reverse(:afmhot),            whiteline=0.0),
+    :HET     => (label="HET [μM N]",  colorrange=(0, 5),     colormap=Reverse(:afmhot),            whiteline=0.0),
     :NUT     => (label="NUT [μM N]",  colorrange=(0, 40),    colormap=Reverse(:cherry),            whiteline=0.0),
     :DOM     => (label="DOM [μM N]",  colorrange=(0, 15),    colormap=Reverse(:CMRmap),            whiteline=0.0),
     :POM     => (label="POM [μM N]",  colorrange=(0, 5),     colormap=Reverse(:greenbrownterrain), whiteline=0.0),
     :u       => (label="u [m/s]",     colorrange=(-0.2, 0.2),colormap=Reverse(:seismic),           whiteline=0.0),
     :v       => (label="v [m/s]",     colorrange=(-0.2, 0.2),colormap=Reverse(:seismic),           whiteline=0.0),
-    :Vel     => (label="Velocities [m/s]", colorrange=(0, 0.25), colormap=Reverse(:magma),         whiteline=0.0),
     :Ci_free => (label="Ci_free [mg/m³]",  colorrange=(0, 1.5),   colormap=:turbo,                 whiteline=0.0),
     :Ci_DOM  => (label="Ci_DOM [mg/m³]",   colorrange=(0, 0.1),   colormap=:turbo,                 whiteline=0.0),
     :Ci_part => (label="Ci_part [mg/m³]",  colorrange=(0, 0.01),  colormap=:turbo,                 whiteline=0.0),
@@ -240,258 +231,12 @@ if BGC_
     println("Water mask: $n_water water cells out of $(data_Nx * data_Ny * Nz) total")
 end
 
-# Region-specific transect (Inner Oslofjord). For each column `j`, pick the
-# horizontal point `i` whose water is deepest within the given `i` range and
-# record it. With the `bottom_z` convention (smaller index = deeper seabed, `Nz`
-# = land/no water), the deepest point is the minimum `bottom_z` over the range,
-# so `max_depth_index` is that maximum-depth bottom index. Columns that are all
-# land are skipped.
-function deepest_transect_point!(transect, bottom_z, j, i_range, Nz)
-    max_depth_index, idx = findmin(@view bottom_z[i_range, j])
-    max_depth_index == Nz && return
-    push!(transect, (length(transect) + 1, i_range[idx], j, max_depth_index))
-    return
-end
-
-function compute_transect(bottom_z, Nz)
-    transect = Vector{Tuple{Int,Int,Int,Int}}()
-
-    lier    = 0
-    drammen = 0
-    oslo    = 1
-
-    if drammen == 1
-        println("Computing transect for Drammen fjord...")
-        for j in 1:66
-            deepest_transect_point!(transect, bottom_z, j, 1:17, Nz)
-        end
-    end
-
-    if lier == 1
-        println("Computing transect for Lier bay fjord...")
-        for j in 1:14
-            deepest_transect_point!(transect, bottom_z, j, 1:11, Nz)
-        end
-    end
-
-    if oslo == 1
-        println("Computing transect for Oslo fjord...")
-        for j in 1:25
-            deepest_transect_point!(transect, bottom_z, j, 1:38, Nz)
-        end
-        for j in 25:35
-            deepest_transect_point!(transect, bottom_z, j, 18:28, Nz)
-        end
-        for j in 36:100
-            deepest_transect_point!(transect, bottom_z, j, 1:38, Nz)
-        end
-        for j in 100:-1:40
-            deepest_transect_point!(transect, bottom_z, j, 38:50, Nz)
-        end
-    end
-
-    println("✅ Total transect points found: ", length(transect))
-    return transect
-end
-
 # compute coordinated of the transect line (i, j) points along the 
 # deepest bottom, for each column in the horizontal plane
 transect = compute_transect(bottom_z, Nz)
+#transect = compute_transect(bottom_z)
 i_vals   = [t[2] for t in transect]
 j_vals   = [t[3] for t in transect]
-
-# Land / absence-of-data masks derived from the water mask. `true` marks a dry
-# cell, drawn grey; wet cells keep their value, and genuine zeros among them are
-# shown in the zero colour by the plotting helpers.
-horizontal_landmask(depth_index) = .!Array(view(water_mask, :, :, depth_index))
-bottom_landmask = .!dropdims(any(water_mask, dims=3), dims=3)
-transect_landmask = [!water_mask[i, j, k] for (_, i, j, _) in transect, k in 1:Nz]
-
-function transect_distances(transect)
-    dist = zeros(Float64, length(transect))
-    for n in 2:length(transect)
-        (_, i1, j1, _) = transect[n-1]
-        (_, i2, j2, _) = transect[n]
-        dist[n] = dist[n-1] + hypot(i2 - i1, j2 - j1) * 0.2
-    end
-    return dist
-end
-
-velocity_magnitude(u_data, v_data) = sqrt.(u_data .^ 2 .+ v_data .^ 2)
-
-function center_velocity_slices(u_slice, v_slice, nx, ny)
-    u_center = Array{Float64}(undef, nx, ny)
-    v_center = Array{Float64}(undef, nx, ny)
-
-    for i in 1:nx, j in 1:ny
-        u_center[i, j] = if size(u_slice, 1) == nx + 1
-            0.5 * (u_slice[i, j] + u_slice[i + 1, j])
-        else
-            u_slice[i, j]
-        end
-        v_center[i, j] = if size(v_slice, 2) == ny + 1
-            0.5 * (v_slice[i, j] + v_slice[i, j + 1])
-        else
-            v_slice[i, j]
-        end
-    end
-
-    return u_center, v_center
-end
-
-function velocity_slice(u_data, v_data, depth_index, day_index)
-    u_slice = replace_zeros_with_NaN!(u_data, depth_index, day_index)
-    v_slice = replace_zeros_with_NaN!(v_data, depth_index, day_index)
-    nx = min(size(u_slice, 1), size(v_slice, 1))
-    ny = min(size(u_slice, 2), size(v_slice, 2))
-    u_center, v_center = center_velocity_slices(u_slice, v_slice, nx, ny)
-    return velocity_magnitude(u_center, v_center), u_center, v_center
-end
-
-function bottom_velocity_slices_at_day(u_data, v_data, bottom_z, day_index)
-    nx, ny = size(bottom_z)
-    u_slice = Array{Float64}(undef, nx, ny)
-    v_slice = Array{Float64}(undef, nx, ny)
-
-    for i in 1:nx, j in 1:ny
-        k = bottom_z[i, j]
-        u_slice[i, j] = if size(u_data, 1) == nx + 1
-            0.5 * (Float64(u_data[i, j, k, day_index]) + Float64(u_data[i + 1, j, k, day_index]))
-        else
-            Float64(u_data[i, j, k, day_index])
-        end
-        v_slice[i, j] = if size(v_data, 2) == ny + 1
-            0.5 * (Float64(v_data[i, j, k, day_index]) + Float64(v_data[i, j + 1, k, day_index]))
-        else
-            Float64(v_data[i, j, k, day_index])
-        end
-    end
-
-    @. u_slice = ifelse(u_slice == 0, NaN, u_slice)
-    @. v_slice = ifelse(v_slice == 0, NaN, v_slice)
-    return velocity_magnitude(u_slice, v_slice), u_slice, v_slice
-end
-
-function velocity_transect_slice(u_data, v_data, transect, t, Nz)
-    nmax = length(transect)
-    u_slice = Array{Float64}(undef, nmax, Nz)
-    v_slice = Array{Float64}(undef, nmax, Nz)
-
-    for (n, (_, i, j, _)) in enumerate(transect)
-        for k in 1:Nz
-            u_slice[n, k] = if size(u_data, 1) > i
-                0.5 * (Float64(u_data[i, j, k, t]) + Float64(u_data[i + 1, j, k, t]))
-            else
-                Float64(u_data[i, j, k, t])
-            end
-            v_slice[n, k] = if size(v_data, 2) > j
-                0.5 * (Float64(v_data[i, j, k, t]) + Float64(v_data[i, j + 1, k, t]))
-            else
-                Float64(v_data[i, j, k, t])
-            end
-        end
-    end
-
-    return velocity_magnitude(u_slice, v_slice)
-end
-
-function plot_velocity_subplot_map!(fig, pos, speed, u_slice, v_slice, title_str, longitudes, latitudes;
-                                    colorrange=(0, 0.25), colormap=:magma, arrow_stride=6)
-    ni, nj = size(speed)
-    if length(longitudes) != ni
-        longitudes = range(first(longitudes), last(longitudes), length=ni)
-    end
-    if length(latitudes) != nj
-        latitudes = range(first(latitudes), last(latitudes), length=nj)
-    end
-
-    ax = Axis(fig[pos...]; title=title_str,
-              width=180, height=300,
-              xlabel="Longitude (°E)", ylabel="Latitude (°N)")
-
-    hm = heatmap!(ax, longitudes, latitudes, speed;
-                  colorrange=colorrange, colormap=colormap, nan_color=LAND_COLOR)
-
-    i_inds = 1:arrow_stride:ni
-    j_inds = 1:arrow_stride:nj
-    xs = Float64[]
-    ys = Float64[]
-    us = Float64[]
-    vs = Float64[]
-    for i in i_inds, j in j_inds
-        if isfinite(speed[i, j]) && isfinite(u_slice[i, j]) && isfinite(v_slice[i, j])
-            push!(xs, longitudes[i])
-            push!(ys, latitudes[j])
-            push!(us, u_slice[i, j])
-            push!(vs, v_slice[i, j])
-        end
-    end
-    arrows2d!(ax, xs, ys, us, vs;
-              lengthscale=0.08, color=:white,
-              shaftwidth=1.2, tipwidth=7, tiplength=9)
-    Colorbar(fig[pos[1], pos[2]+1], hm, vertical=true)
-end
-
-function plot_transect_panel!(fig, pos, data, spec, depth, dist; landmask=nothing)
-    axis = Axis(fig[pos...];
-                title = spec.label,
-                xlabel = pos[1] == 2 ? "Distance along transect (km)" : "",
-                ylabel = pos[2] == 1 ? "Depth (m)" : "")
-
-    data_plot = Float64.(data)
-    if landmask !== nothing && size(landmask) == size(data_plot)
-        data_plot[landmask] .= NaN
-    end
-    land_mask = isnan.(data_plot)
-    finite_data = data_plot[.!land_mask]
-    if isempty(finite_data)
-        data_plot .= 0.0
-        heatmap!(axis, dist, depth, data_plot;
-                 colorrange = (0.0, 1.0), colormap = [LAND_COLOR], interpolate = false)
-        return nothing
-    end
-
-    colorrange = tracer_colorrange(data_plot, spec.colorrange)
-    mark_water_zeros!(data_plot, colorrange[1])
-    hm = heatmap!(axis, dist, depth, data_plot;
-                  colorrange = colorrange,
-                  colormap = spec.colormap,
-                  interpolate = false,
-                  nan_color = LAND_COLOR,
-                  lowclip = ZERO_COLOR)
-
-    if spec.whiteline != 0.0
-        contour_data = Float64.(data)
-        contour_data[land_mask] .= spec.whiteline + 1000.0
-        contour!(axis, dist, depth, contour_data;
-                 levels = [spec.whiteline], color = :white,
-                 linewidth = 2, linestyle = :dot)
-    end
-
-    Colorbar(fig[pos[1], pos[2] + 1], hm, label = spec.label, width = 14)
-    return nothing
-end
-
-function plot_transect_sheet(folder, day, depth, transect, slices; landmask=nothing)
-    dist = transect_distances(transect)
-    fig = Figure(size = (2400, 900), fontsize = 18)
-    Label(fig[0, 1:10], "Transects for day $day", fontsize = 26)
-
-    upper = [(:T, slices.T), (:S, slices.S), (:Vel, slices.Vel), (:e, slices.e), (:O2, slices.O₂)]
-    lower = [(:P, slices.P), (:HET, slices.HET), (:POM, slices.POM), (:DOM, slices.DOM), (:NUT, slices.NUT)]
-
-    for (column, (name, data)) in enumerate(upper)
-        plot_transect_panel!(fig, (1, 2column - 1), data, PLOT[name], depth, dist; landmask=landmask)
-    end
-    for (column, (name, data)) in enumerate(lower)
-        plot_transect_panel!(fig, (2, 2column - 1), data, PLOT[name], depth, dist; landmask=landmask)
-    end
-
-    filename = joinpath(folder, "transects_all_day_$(day).png")
-    save(filename, fig, px_per_unit = 2)
-    @info "Saved: transects_all_day_$(day).png"
-    return fig
-end
 
 ##########################################
 # Bottom depth map
@@ -513,7 +258,6 @@ make_bottom_depth_and_transect_figure(folder, bottom_z, depth, real_lon, real_la
 # Inner Oslofjord  ans 20, 39, 9, 36,: 
 plot_ztime(NUT, O₂, O₂_sat, P, HET, T, DOM, POM, S, 23, 62, times, depth, folder)
 plot_ztime(NUT, O₂, O₂_sat, P, HET, T, DOM, POM, S, 50, 67, times, depth, folder)
-plot_ztime(NUT, O₂, O₂_sat, P, HET, T, DOM, POM, S, 32, 5, times, depth, folder)
 
 ##########################################
 # AVERAGED VALUES OVER THE VOLUME
@@ -751,8 +495,8 @@ end
 
 bottom_layer   = Nz
 depth_indexes  = [Nz]
-fig_width      = 1900
-fig_height     = 850
+fig_width      = 1000
+fig_height     = 1150
 
 for plot_day in plot_dates
     day_index = plot_day * round(Int, length(times) / 365)
@@ -761,100 +505,99 @@ for plot_day in plot_dates
         println("Plotting full map figure for day $plot_day ...")
         ####################
         # vertical TRANSECTS
-        T_transect = vert_transect_slice(T, transect, day_index, Nz)
-        S_transect = vert_transect_slice(S, transect, day_index, Nz)
-        Vel_transect = velocity_transect_slice(u, v, transect, day_index, Nz)
-        e_transect = vert_transect_slice(e, transect, day_index, Nz)
         O2_slice = vert_transect_slice(O₂, transect, day_index, Nz)
+        _ = plot_param_transect(O2_slice, PLOT[:O2].label, depth, transect, folder;
+                                colormap=PLOT[:O2].colormap, day_index=plot_day, whiteline=PLOT[:O2].whiteline, colorrange=PLOT[:O2].colorrange)
         NUT_slice = vert_transect_slice(NUT, transect, day_index, Nz)
+        _ = plot_param_transect(NUT_slice, PLOT[:NUT].label, depth, transect, folder;
+                                colormap=PLOT[:NUT].colormap, day_index=plot_day, whiteline=PLOT[:NUT].whiteline, colorrange=PLOT[:NUT].colorrange)
+        e_slice = vert_transect_slice(e, transect, day_index, Nz)
+        _ = plot_param_transect(e_slice, PLOT[:e].label, depth, transect, folder;
+                                colormap=PLOT[:e].colormap, day_index=plot_day, whiteline=PLOT[:e].whiteline)
+        S_slice = vert_transect_slice(S, transect, day_index, Nz)
+        _ = plot_param_transect(S_slice, PLOT[:S].label, depth, transect, folder;
+                                colormap=PLOT[:S].colormap, day_index=plot_day, whiteline=PLOT[:S].whiteline, colorrange=PLOT[:S].colorrange)
         P_slice = vert_transect_slice(P, transect, day_index, Nz)
-        HET_slice = vert_transect_slice(HET, transect, day_index, Nz)
+        _ = plot_param_transect(P_slice, PLOT[:P].label, depth, transect, folder;
+                                colormap=PLOT[:P].colormap, day_index=plot_day, whiteline=PLOT[:P].whiteline, colorrange=PLOT[:P].colorrange)
         POM_slice = vert_transect_slice(POM, transect, day_index, Nz)
+        _ = plot_param_transect(POM_slice, PLOT[:POM].label, depth, transect, folder;
+                                colormap=PLOT[:POM].colormap, day_index=plot_day, whiteline=PLOT[:POM].whiteline, colorrange=PLOT[:POM].colorrange)
         DOM_slice = vert_transect_slice(DOM, transect, day_index, Nz)
-        plot_transect_sheet(folder, plot_day, depth, transect, (
-            T = T_transect,
-            S = S_transect,
-            Vel = Vel_transect,
-            e = e_transect,
-            O₂ = O2_slice,
-            P = P_slice,
-            NUT = NUT_slice,
-            DOM = DOM_slice,
-            POM = POM_slice,
-            HET = HET_slice,
-        ); landmask=transect_landmask)
+        _ = plot_param_transect(DOM_slice, PLOT[:DOM].label, depth, transect, folder;
+                                colormap=PLOT[:DOM].colormap, day_index=plot_day, whiteline=PLOT[:DOM].whiteline, colorrange=PLOT[:DOM].colorrange)
            
     if Ci_
         Ci_free_slice = vert_transect_slice(Ci_free, transect, day_index, Nz)
         _ = plot_param_transect(Ci_free_slice, PLOT[:Ci_free].label, depth, transect, folder;
-                                colormap=PLOT[:Ci_free].colormap, day_index=plot_day, whiteline=PLOT[:Ci_free].whiteline, colorrange=PLOT[:Ci_free].colorrange, landmask=transect_landmask)
+                                colormap=PLOT[:Ci_free].colormap, day_index=plot_day, whiteline=PLOT[:Ci_free].whiteline, colorrange=PLOT[:Ci_free].colorrange)
         Ci_DOM_slice = vert_transect_slice(Ci_DOM, transect, day_index, Nz)
         _ = plot_param_transect(Ci_DOM_slice, PLOT[:Ci_DOM].label, depth, transect, folder;
-                                colormap=PLOT[:Ci_DOM].colormap, day_index=plot_day, whiteline=PLOT[:Ci_DOM].whiteline, colorrange=PLOT[:Ci_DOM].colorrange, landmask=transect_landmask)
+                                colormap=PLOT[:Ci_DOM].colormap, day_index=plot_day, whiteline=PLOT[:Ci_DOM].whiteline, colorrange=PLOT[:Ci_DOM].colorrange)
         Ci_diss_slice = Ci_free_slice .+ Ci_DOM_slice
         _ = plot_param_transect(Ci_diss_slice, PLOT[:Ci_float].label, depth, transect, folder;
-                                colormap=PLOT[:Ci_float].colormap, day_index=plot_day, whiteline=PLOT[:Ci_float].whiteline, colorrange=PLOT[:Ci_float].colorrange, landmask=transect_landmask)
+                                colormap=PLOT[:Ci_float].colormap, day_index=plot_day, whiteline=PLOT[:Ci_float].whiteline, colorrange=PLOT[:Ci_float].colorrange)
         Ci_PHY_slice = vert_transect_slice(Ci_PHY, transect, day_index, Nz)
         _ = plot_param_transect(Ci_PHY_slice, PLOT[:Ci_PHY].label, depth, transect, folder;
-                                colormap=PLOT[:Ci_PHY].colormap, day_index=plot_day, whiteline=PLOT[:Ci_PHY].whiteline, colorrange=PLOT[:Ci_PHY].colorrange, landmask=transect_landmask)
+                                colormap=PLOT[:Ci_PHY].colormap, day_index=plot_day, whiteline=PLOT[:Ci_PHY].whiteline, colorrange=PLOT[:Ci_PHY].colorrange)
         Ci_HET_slice = vert_transect_slice(Ci_HET, transect, day_index, Nz)
         _ = plot_param_transect(Ci_HET_slice, PLOT[:Ci_HET].label, depth, transect, folder;
-                                colormap=PLOT[:Ci_HET].colormap, day_index=plot_day, whiteline=PLOT[:Ci_HET].whiteline, colorrange=PLOT[:Ci_HET].colorrange, landmask=transect_landmask)
+                                colormap=PLOT[:Ci_HET].colormap, day_index=plot_day, whiteline=PLOT[:Ci_HET].whiteline, colorrange=PLOT[:Ci_HET].colorrange)
         Ci_POM_slice = vert_transect_slice(Ci_POM, transect, day_index, Nz)
         _ = plot_param_transect(Ci_POM_slice, PLOT[:Ci_POM].label, depth, transect, folder;
-                                colormap=PLOT[:Ci_POM].colormap, day_index=plot_day, whiteline=PLOT[:Ci_POM].whiteline, colorrange=PLOT[:Ci_POM].colorrange, landmask=transect_landmask)
+                                colormap=PLOT[:Ci_POM].colormap, day_index=plot_day, whiteline=PLOT[:Ci_POM].whiteline, colorrange=PLOT[:Ci_POM].colorrange)
         Ci_part_slice = Ci_PHY_slice .+ Ci_HET_slice .+ Ci_POM_slice
         _ = plot_param_transect(Ci_part_slice, PLOT[:Ci_part].label, depth, transect, folder;
-                                colormap=PLOT[:Ci_part].colormap, day_index=plot_day, whiteline=PLOT[:Ci_part].whiteline, colorrange=PLOT[:Ci_part].colorrange, landmask=transect_landmask)
+                                colormap=PLOT[:Ci_part].colormap, day_index=plot_day, whiteline=PLOT[:Ci_part].whiteline, colorrange=PLOT[:Ci_part].colorrange)
         end
 
         ####################
         # horizontal slices for maps
-        landmask_h   = horizontal_landmask(depth_index)
-        T_slice      = raw_slice(T, depth_index, day_index)
-        S_slice      = raw_slice(S, depth_index, day_index)
-        O₂_slice     = raw_slice(O₂, depth_index, day_index)
-        NUT_slice    = raw_slice(NUT, depth_index, day_index)
-        P_slice      = raw_slice(P, depth_index, day_index)
-        HET_slice    = raw_slice(HET, depth_index, day_index)
-        DOM_slice    = raw_slice(DOM, depth_index, day_index)
-        POM_slice    = raw_slice(POM, depth_index, day_index)
-        O₂_sat_slice = raw_slice(O₂_sat, depth_index, day_index)
-        Vel_slice, u_slice, v_slice = velocity_slice(u, v, depth_index, day_index)
+        T_slice      = replace_zeros_with_NaN!(T, depth_index, day_index)
+        S_slice      = replace_zeros_with_NaN!(S, depth_index, day_index)
+        O₂_slice     = replace_zeros_with_NaN!(O₂, depth_index, day_index)
+        NUT_slice    = replace_zeros_with_NaN!(NUT, depth_index, day_index)
+        P_slice      = replace_zeros_with_NaN!(P, depth_index, day_index)
+        HET_slice    = replace_zeros_with_NaN!(HET, depth_index, day_index)
+        DOM_slice    = replace_zeros_with_NaN!(DOM, depth_index, day_index)
+        POM_slice    = replace_zeros_with_NaN!(POM, depth_index, day_index)
+        O₂_sat_slice = replace_zeros_with_NaN!(O₂_sat, depth_index, day_index)
 
         if Ci_
-            Ci_free_slice = raw_slice(Ci_free, depth_index, day_index)
-            Ci_DOM_slice  = raw_slice(Ci_DOM, depth_index, day_index)
-            Ci_PHY_slice  = raw_slice(Ci_PHY, depth_index, day_index)
-            Ci_POM_slice  = raw_slice(Ci_POM, depth_index, day_index)
-            Ci_HET_slice  = raw_slice(Ci_HET, depth_index, day_index)
+            Ci_free_slice = replace_zeros_with_NaN!(Ci_free, depth_index, day_index)
+            Ci_DOM_slice  = replace_zeros_with_NaN!(Ci_DOM, depth_index, day_index)
+            Ci_PHY_slice  = replace_zeros_with_NaN!(Ci_PHY, depth_index, day_index)
+            Ci_POM_slice  = replace_zeros_with_NaN!(Ci_POM, depth_index, day_index)
+            Ci_HET_slice  = replace_zeros_with_NaN!(Ci_HET, depth_index, day_index)
         end
+
+        v_slice = replace_zeros_with_NaN!(v, depth_index, day_index)
+        u_slice = replace_zeros_with_NaN!(u, depth_index, day_index)
 
         ####################
         # HORIZONTAL MAPS
         println("Creating maps for day $plot_day at depth index $depth_index ...")
-        local fig = Figure(size=(fig_width, fig_height))
+        fig = Figure(size=(fig_width, fig_height))
         plot_tracer_subplot_map!(fig, (1, 1), T_slice,       PLOT[:T].label,      real_lon, real_lat;
-                                 colorrange=PLOT[:T].colorrange, colormap=PLOT[:T].colormap, whiteline=PLOT[:T].whiteline, landmask=landmask_h)
+                                 colorrange=PLOT[:T].colorrange, colormap=PLOT[:T].colormap, whiteline=PLOT[:T].whiteline)
         plot_tracer_subplot_map!(fig, (1, 3), S_slice,       PLOT[:S].label,      real_lon, real_lat;
-                                 colorrange=PLOT[:S].colorrange, colormap=PLOT[:S].colormap, whiteline=PLOT[:S].whiteline, landmask=landmask_h)
-        plot_velocity_subplot_map!(fig, (1, 5), Vel_slice, u_slice, v_slice, PLOT[:Vel].label, real_lon, real_lat;
-                       colorrange=PLOT[:Vel].colorrange, colormap=PLOT[:Vel].colormap)
-        plot_tracer_subplot_map!(fig, (1, 7), O₂_slice,      PLOT[:O2].label,     real_lon, real_lat;
-                                 colorrange=PLOT[:O2].colorrange, colormap=PLOT[:O2].colormap, whiteline=PLOT[:O2].whiteline, landmask=landmask_h)
-        plot_tracer_subplot_map!(fig, (1, 9), O₂_sat_slice,  PLOT[:O2sat].label,  real_lon, real_lat;
-                     colorrange=PLOT[:O2sat].colorrange, colormap=PLOT[:O2sat].colormap, whiteline=PLOT[:O2sat].whiteline, landmask=landmask_h)
+                                 colorrange=PLOT[:S].colorrange, colormap=PLOT[:S].colormap, whiteline=PLOT[:S].whiteline)
+        plot_tracer_subplot_map!(fig, (1, 5), O₂_slice,      PLOT[:O2].label,     real_lon, real_lat;
+                                 colorrange=PLOT[:O2].colorrange, colormap=PLOT[:O2].colormap, whiteline=PLOT[:O2].whiteline)
 
         plot_tracer_subplot_map!(fig, (2, 1), P_slice,       PLOT[:P].label,      real_lon, real_lat;
-                                 colorrange=PLOT[:P].colorrange, colormap=PLOT[:P].colormap, whiteline=PLOT[:P].whiteline, landmask=landmask_h)
+                                 colorrange=PLOT[:P].colorrange, colormap=PLOT[:P].colormap, whiteline=PLOT[:P].whiteline)
         plot_tracer_subplot_map!(fig, (2, 3), HET_slice,     PLOT[:HET].label,    real_lon, real_lat;
-                                 colorrange=PLOT[:HET].colorrange, colormap=PLOT[:HET].colormap, whiteline=PLOT[:HET].whiteline, landmask=landmask_h)
-        plot_tracer_subplot_map!(fig, (2, 5), POM_slice,     PLOT[:POM].label,    real_lon, real_lat;
-                                 colorrange=PLOT[:POM].colorrange, colormap=PLOT[:POM].colormap, whiteline=PLOT[:POM].whiteline, landmask=landmask_h)
-        plot_tracer_subplot_map!(fig, (2, 7), DOM_slice,     PLOT[:DOM].label,    real_lon, real_lat;
-                     colorrange=PLOT[:DOM].colorrange, colormap=PLOT[:DOM].colormap, whiteline=PLOT[:DOM].whiteline, landmask=landmask_h)
-        plot_tracer_subplot_map!(fig, (2, 9), NUT_slice,     PLOT[:NUT].label,    real_lon, real_lat;
-                                 colorrange=PLOT[:NUT].colorrange, colormap=PLOT[:NUT].colormap, whiteline=PLOT[:NUT].whiteline, landmask=landmask_h)
+                                 colorrange=PLOT[:HET].colorrange, colormap=PLOT[:HET].colormap, whiteline=PLOT[:HET].whiteline)
+        plot_tracer_subplot_map!(fig, (2, 5), O₂_sat_slice,  PLOT[:O2sat].label,  real_lon, real_lat;
+                                 colorrange=PLOT[:O2sat].colorrange, colormap=PLOT[:O2sat].colormap, whiteline=PLOT[:O2sat].whiteline)
+
+        plot_tracer_subplot_map!(fig, (3, 1), DOM_slice,     PLOT[:DOM].label,    real_lon, real_lat;
+                                 colorrange=PLOT[:DOM].colorrange, colormap=PLOT[:DOM].colormap, whiteline=PLOT[:DOM].whiteline)
+        plot_tracer_subplot_map!(fig, (3, 3), POM_slice,     PLOT[:POM].label,    real_lon, real_lat;
+                                 colorrange=PLOT[:POM].colorrange, colormap=PLOT[:POM].colormap, whiteline=PLOT[:POM].whiteline)
+        plot_tracer_subplot_map!(fig, (3, 5), NUT_slice,     PLOT[:NUT].label,    real_lon, real_lat;
+                                 colorrange=PLOT[:NUT].colorrange, colormap=PLOT[:NUT].colormap, whiteline=PLOT[:NUT].whiteline)
 
         save(joinpath(folder, "map_iz_$(depth_index)_day_$(plot_day).png"), fig)
         @info "Saved: map_iz_$(depth_index)_day_$(plot_day).png"
@@ -863,25 +606,25 @@ for plot_day in plot_dates
             fig2 = Figure(size=(fig_width, fig_height))
 
             plot_tracer_subplot_map!(fig2, (1, 1), Ci_free_slice, PLOT[:Ci_free].label, real_lon, real_lat;
-                                     colorrange=PLOT[:Ci_free].colorrange, colormap=PLOT[:Ci_free].colormap, whiteline=PLOT[:Ci_free].whiteline, landmask=landmask_h)
+                                     colorrange=PLOT[:Ci_free].colorrange, colormap=PLOT[:Ci_free].colormap, whiteline=PLOT[:Ci_free].whiteline)
             plot_tracer_subplot_map!(fig2, (1, 3), Ci_DOM_slice,  PLOT[:Ci_DOM].label,  real_lon, real_lat;
-                                     colorrange=PLOT[:Ci_DOM].colorrange, colormap=PLOT[:Ci_DOM].colormap, whiteline=PLOT[:Ci_DOM].whiteline, landmask=landmask_h)
+                                     colorrange=PLOT[:Ci_DOM].colorrange, colormap=PLOT[:Ci_DOM].colormap, whiteline=PLOT[:Ci_DOM].whiteline)
             Ci_part_slice = Ci_PHY_slice .+ Ci_HET_slice .+ Ci_POM_slice
             plot_tracer_subplot_map!(fig2, (1, 5), Ci_part_slice, PLOT[:Ci_part].label, real_lon, real_lat;
-                                     colorrange=PLOT[:Ci_part].colorrange, colormap=PLOT[:Ci_part].colormap, whiteline=PLOT[:Ci_part].whiteline, landmask=landmask_h)
+                                     colorrange=PLOT[:Ci_part].colorrange, colormap=PLOT[:Ci_part].colormap, whiteline=PLOT[:Ci_part].whiteline)
             plot_tracer_subplot_map!(fig2, (2, 1), Ci_PHY_slice,  PLOT[:Ci_PHY].label,  real_lon, real_lat;
-                                     colorrange=PLOT[:Ci_PHY].colorrange, colormap=PLOT[:Ci_PHY].colormap, whiteline=PLOT[:Ci_PHY].whiteline, landmask=landmask_h)
+                                     colorrange=PLOT[:Ci_PHY].colorrange, colormap=PLOT[:Ci_PHY].colormap, whiteline=PLOT[:Ci_PHY].whiteline)
             plot_tracer_subplot_map!(fig2, (2, 3), Ci_HET_slice,  PLOT[:Ci_HET].label,  real_lon, real_lat;
-                                     colorrange=PLOT[:Ci_HET].colorrange, colormap=PLOT[:Ci_HET].colormap, whiteline=PLOT[:Ci_HET].whiteline, landmask=landmask_h)
+                                     colorrange=PLOT[:Ci_HET].colorrange, colormap=PLOT[:Ci_HET].colormap, whiteline=PLOT[:Ci_HET].whiteline)
             plot_tracer_subplot_map!(fig2, (2, 5), Ci_POM_slice,  PLOT[:Ci_POM].label,  real_lon, real_lat;
-                                     colorrange=PLOT[:Ci_POM].colorrange, colormap=PLOT[:Ci_POM].colormap, whiteline=PLOT[:Ci_POM].whiteline, landmask=landmask_h)
+                                     colorrange=PLOT[:Ci_POM].colorrange, colormap=PLOT[:Ci_POM].colormap, whiteline=PLOT[:Ci_POM].whiteline)
             plot_tracer_subplot_map!(fig2, (3, 1), u_slice,       PLOT[:u].label,       real_lon, real_lat;
                                      colorrange=PLOT[:u].colorrange, colormap=PLOT[:u].colormap, whiteline=PLOT[:u].whiteline)
             plot_tracer_subplot_map!(fig2, (3, 3), v_slice,       PLOT[:v].label,       real_lon, real_lat;
                                      colorrange=PLOT[:v].colorrange, colormap=PLOT[:v].colormap, whiteline=PLOT[:v].whiteline)
              Ci_diss_slice = Ci_free_slice .+ Ci_DOM_slice
             plot_tracer_subplot_map!(fig2, (3, 5), Ci_diss_slice, PLOT[:Ci_float].label, real_lon, real_lat;
-                                     colorrange=PLOT[:Ci_float].colorrange, colormap=PLOT[:Ci_float].colormap, whiteline=PLOT[:Ci_float].whiteline, landmask=landmask_h)
+                                     colorrange=PLOT[:Ci_float].colorrange, colormap=PLOT[:Ci_float].colormap, whiteline=PLOT[:Ci_float].whiteline)
             save(joinpath(folder, "map2_iz_$(depth_index)_day_$(plot_day).png"), fig2)
             @info "Saved: map2_iz_$(depth_index)_day_$(plot_day).png"
         end
@@ -894,29 +637,27 @@ for plot_day in plot_dates
     P_slice_bot, HET_slice_bot, O₂_sat_slice_bot,
     DOM_slice_bot, POM_slice_bot, NUT_slice_bot =
         bottom_slices_at_day(T, S, O₂, P, HET, O₂_sat, DOM, POM, NUT, bottom_z, day_index)
-    Vel_slice_bot, u_slice_bot, v_slice_bot = bottom_velocity_slices_at_day(u, v, bottom_z, day_index)
 
     plot_tracer_subplot_map!(fig_b, (1, 1), T_slice_bot, PLOT[:T].label,      real_lon, real_lat;
-                             colorrange=PLOT[:T].colorrange, colormap=PLOT[:T].colormap, whiteline=PLOT[:T].whiteline, landmask=bottom_landmask)
+                             colorrange=PLOT[:T].colorrange, colormap=PLOT[:T].colormap, whiteline=PLOT[:T].whiteline)
     plot_tracer_subplot_map!(fig_b, (1, 3), S_slice_bot, PLOT[:S].label,      real_lon, real_lat;
-                             colorrange=PLOT[:S].colorrange, colormap=PLOT[:S].colormap, whiteline=PLOT[:S].whiteline, landmask=bottom_landmask)
-    plot_velocity_subplot_map!(fig_b, (1, 5), Vel_slice_bot, u_slice_bot, v_slice_bot, PLOT[:Vel].label, real_lon, real_lat;
-                               colorrange=PLOT[:Vel].colorrange, colormap=PLOT[:Vel].colormap)
-    plot_tracer_subplot_map!(fig_b, (1, 7), O₂_slice_bot, PLOT[:O2].label,    real_lon, real_lat;
-                             colorrange=PLOT[:O2].colorrange, colormap=PLOT[:O2].colormap, whiteline=0.0, landmask=bottom_landmask ) #PLOT[:O2].whiteline)
-    plot_tracer_subplot_map!(fig_b, (1, 9), O₂_sat_slice_bot, PLOT[:O2sat].label, real_lon, real_lat;
-                             colorrange=PLOT[:O2sat].colorrange, colormap=PLOT[:O2sat].colormap, whiteline=0.0, landmask=bottom_landmask )#PLOT[:O2sat].whiteline)
+                             colorrange=PLOT[:S].colorrange, colormap=PLOT[:S].colormap, whiteline=PLOT[:S].whiteline)
+    plot_tracer_subplot_map!(fig_b, (1, 5), O₂_slice_bot, PLOT[:O2].label,    real_lon, real_lat;
+                             colorrange=PLOT[:O2].colorrange, colormap=PLOT[:O2].colormap, whiteline=PLOT[:O2].whiteline)
 
     plot_tracer_subplot_map!(fig_b, (2, 1), P_slice_bot, PLOT[:P].label,      real_lon, real_lat;
-                             colorrange=PLOT[:P].colorrange, colormap=PLOT[:P].colormap, whiteline=PLOT[:P].whiteline, landmask=bottom_landmask)
+                             colorrange=PLOT[:P].colorrange, colormap=PLOT[:P].colormap, whiteline=PLOT[:P].whiteline)
     plot_tracer_subplot_map!(fig_b, (2, 3), HET_slice_bot, PLOT[:HET].label,  real_lon, real_lat;
-                             colorrange=PLOT[:HET].colorrange, colormap=PLOT[:HET].colormap, whiteline=PLOT[:HET].whiteline, landmask=bottom_landmask)
-    plot_tracer_subplot_map!(fig_b, (2, 5), POM_slice_bot, PLOT[:POM].label,   real_lon, real_lat;
-                             colorrange=PLOT[:POM].colorrange, colormap=PLOT[:POM].colormap, whiteline=PLOT[:POM].whiteline, landmask=bottom_landmask)
-    plot_tracer_subplot_map!(fig_b, (2, 7), DOM_slice_bot, PLOT[:DOM].label,   real_lon, real_lat;
-                             colorrange=PLOT[:DOM].colorrange, colormap=PLOT[:DOM].colormap, whiteline=PLOT[:DOM].whiteline, landmask=bottom_landmask)
-    plot_tracer_subplot_map!(fig_b, (2, 9), NUT_slice_bot, PLOT[:NUT].label,   real_lon, real_lat;
-                             colorrange=PLOT[:NUT].colorrange, colormap=PLOT[:NUT].colormap, whiteline=PLOT[:NUT].whiteline, landmask=bottom_landmask)
+                             colorrange=PLOT[:HET].colorrange, colormap=PLOT[:HET].colormap, whiteline=PLOT[:HET].whiteline)
+    plot_tracer_subplot_map!(fig_b, (2, 5), O₂_sat_slice_bot, PLOT[:O2sat].label, real_lon, real_lat;
+                             colorrange=PLOT[:O2sat].colorrange, colormap=PLOT[:O2sat].colormap, whiteline=PLOT[:O2sat].whiteline)
+
+    plot_tracer_subplot_map!(fig_b, (3, 1), DOM_slice_bot, PLOT[:DOM].label,   real_lon, real_lat;
+                             colorrange=PLOT[:DOM].colorrange, colormap=PLOT[:DOM].colormap, whiteline=PLOT[:DOM].whiteline)
+    plot_tracer_subplot_map!(fig_b, (3, 3), POM_slice_bot, PLOT[:POM].label,   real_lon, real_lat;
+                             colorrange=PLOT[:POM].colorrange, colormap=PLOT[:POM].colormap, whiteline=PLOT[:POM].whiteline)
+    plot_tracer_subplot_map!(fig_b, (3, 5), NUT_slice_bot, PLOT[:NUT].label,   real_lon, real_lat;
+                             colorrange=PLOT[:NUT].colorrange, colormap=PLOT[:NUT].colormap, whiteline=PLOT[:NUT].whiteline)
 
     save(joinpath(folder, "map_bottom_day_$(plot_day).png"), fig_b)
     @info "Saved: map_bottom_day_$(plot_day).png"
@@ -930,24 +671,21 @@ end
 
 if maps_animations_ 
 # ------------------ Movies ------------------
-    record_horizontal_tracer(T,   times, folder, "Tsurf",    PLOT[:T].label,
-                            real_lon, real_lat;
-                            colorrange=PLOT[:T].colorrange, colormap=PLOT[:T].colormap, iz=Nz, speed=animation_speed, water_mask=water_mask)
     record_horizontal_tracer(S,   times, folder, "Ssurf",    PLOT[:S].label,
                             real_lon, real_lat;
-                            colorrange=(0, 25), colormap=PLOT[:S].colormap, iz=Nz, speed=animation_speed, water_mask=water_mask)
+                            colorrange=(0, 25), colormap=PLOT[:S].colormap, iz=Nz, speed=animation_speed)
     record_horizontal_tracer(NUT, times, folder, "NUTsurf",  PLOT[:NUT].label,
                             real_lon, real_lat;
-                            colorrange=PLOT[:NUT].colorrange, colormap=PLOT[:NUT].colormap, iz=Nz, speed=animation_speed, water_mask=water_mask)
+                            colorrange=PLOT[:NUT].colorrange, colormap=PLOT[:NUT].colormap, iz=Nz, speed=animation_speed)
     record_horizontal_tracer(DOM, times, folder, "DOMsurf",  PLOT[:DOM].label,
                             real_lon, real_lat;
-                            colorrange=(0, 5), colormap=Reverse(:cherry), iz=Nz, speed=animation_speed, water_mask=water_mask)
+                            colorrange=(0, 5), colormap=Reverse(:cherry), iz=Nz, speed=animation_speed)
     record_horizontal_tracer(O₂,  times, folder, "O2surf",   PLOT[:O2].label,
                             real_lon, real_lat;
-                            colorrange=PLOT[:O2].colorrange, colormap=PLOT[:O2].colormap, iz=Nz, speed=animation_speed, water_mask=water_mask)
+                            colorrange=PLOT[:O2].colorrange, colormap=PLOT[:O2].colormap, iz=Nz, speed=animation_speed)
     record_horizontal_tracer(P,   times, folder, "PHYsurf",  PLOT[:P].label,
                             real_lon, real_lat;
-                            colorrange=PLOT[:P].colorrange, colormap=PLOT[:P].colormap, iz=Nz, speed=animation_speed, water_mask=water_mask)
+                            colorrange=PLOT[:P].colorrange, colormap=PLOT[:P].colormap, iz=Nz, speed=animation_speed)
 #for Iiz in 9:11
 #    record_horizontal_tracer(Ci_free,   times, folder, "Ci_free_surf",  PLOT[:Ci_free].label,
 #                            real_lon, real_lat;
@@ -957,36 +695,27 @@ if maps_animations_
     if Ci_
         record_horizontal_tracer(Ci_free .+ Ci_DOM, times, folder, "Ci_float", PLOT[:Ci_float].label,
                                 real_lon, real_lat;
-                                colorrange=PLOT[:Ci_float].colorrange, colormap=PLOT[:Ci_float].colormap, iz=Nz, speed=animation_speed, water_mask=water_mask)
+                                colorrange=PLOT[:Ci_float].colorrange, colormap=PLOT[:Ci_float].colormap, iz=Nz, speed=animation_speed)
         record_horizontal_tracer(Ci_free, times, folder, "Ci_free", PLOT[:Ci_free].label,
                                 real_lon, real_lat;
-                                colorrange=PLOT[:Ci_free].colorrange, colormap=PLOT[:Ci_free].colormap, iz=Nz, speed=animation_speed, water_mask=water_mask)
+                                colorrange=PLOT[:Ci_free].colorrange, colormap=PLOT[:Ci_free].colormap, iz=Nz, speed=animation_speed)
         record_horizontal_tracer(Ci_PHY,  times, folder, "Ci_PHY",  PLOT[:Ci_PHY].label,
                                 real_lon, real_lat;
-                                colorrange=PLOT[:Ci_PHY].colorrange, colormap=PLOT[:Ci_PHY].colormap, iz=Nz, speed=animation_speed, water_mask=water_mask)
+                                colorrange=PLOT[:Ci_PHY].colorrange, colormap=PLOT[:Ci_PHY].colormap, iz=Nz, speed=animation_speed)
         record_horizontal_tracer(Ci_HET,  times, folder, "Ci_HET",  PLOT[:Ci_HET].label,
                                 real_lon, real_lat;
-                                colorrange=PLOT[:Ci_HET].colorrange, colormap=PLOT[:Ci_HET].colormap, iz=Nz, speed=animation_speed, water_mask=water_mask)
+                                colorrange=PLOT[:Ci_HET].colorrange, colormap=PLOT[:Ci_HET].colormap, iz=Nz, speed=animation_speed)
         record_horizontal_tracer(Ci_POM,  times, folder, "Ci_POM",  PLOT[:Ci_POM].label,
                                 real_lon, real_lat;
-                                colorrange=PLOT[:Ci_POM].colorrange, colormap=PLOT[:Ci_POM].colormap, iz=Nz, speed=animation_speed, water_mask=water_mask)
+                                colorrange=PLOT[:Ci_POM].colorrange, colormap=PLOT[:Ci_POM].colormap, iz=Nz, speed=animation_speed)
         record_horizontal_tracer(Ci_DOM,  times, folder, "Ci_DOM",  PLOT[:Ci_DOM].label,
                                 real_lon, real_lat;
-                                colorrange=PLOT[:Ci_DOM].colorrange, colormap=PLOT[:Ci_DOM].colormap, iz=Nz, speed=animation_speed, water_mask=water_mask)
+                                colorrange=PLOT[:Ci_DOM].colorrange, colormap=PLOT[:Ci_DOM].colormap, iz=Nz, speed=animation_speed)
     end
 
     record_bottom_tracer(O₂, "O2_bottom", Nz, times, folder,
                         real_lon, real_lat;
-                        colorrange=(-1, 350), colormap=PLOT[:O2].colormap, figsize=(400, 550), speed=animation_speed, water_mask=water_mask)
-    record_bottom_tracer(NUT, "NUT_bottom", Nz, times, folder,
-                        real_lon, real_lat;
-                        colorrange=PLOT[:NUT].colorrange, colormap=PLOT[:NUT].colormap, figsize=(400, 550), speed=animation_speed, water_mask=water_mask)
-    record_bottom_tracer(DOM, "DOM_bottom", Nz, times, folder,
-                        real_lon, real_lat;
-                        colorrange=PLOT[:DOM].colorrange, colormap=PLOT[:DOM].colormap, figsize=(400, 550), speed=animation_speed, water_mask=water_mask)
-    record_bottom_tracer(POM, "POM_bottom", Nz, times, folder,
-                        real_lon, real_lat;
-                        colorrange=PLOT[:POM].colorrange, colormap=PLOT[:POM].colormap, figsize=(400, 550), speed=animation_speed, water_mask=water_mask)
+                        colorrange=(-1, 350), colormap=PLOT[:O2].colormap, figsize=(400, 550), speed=animation_speed)
 end
 ##########################################
 #-------Six animation in 1 figure---------
@@ -994,7 +723,7 @@ if six_animations_
     prepare_six_animations(tracers=[NUT, O₂, P, HET, POM, DOM],
                            times=times, folder=folder,
                            real_lon=real_lon, real_lat=real_lat,
-                           Nz=Nz, water_mask=water_mask)
+                           Nz=Nz)
 end
 
 close(ds)

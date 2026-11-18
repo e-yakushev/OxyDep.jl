@@ -10,6 +10,7 @@ edge, covering 2020 through 2021-01-01. No downloads are performed.
 Temperature, salinity, velocity, elevation, and barotropic velocity use NorKyst.
 NUT, DOM, and O2 CSV values retain their source units and are interpolated linearly
 in depth, held constant within each day and beyond their shallowest/deepest depth.
+The five Ci tracers use zero exterior concentrations.
 Day 366 uses day 365 when the CSV has only 365 days. P = 0.05, HET = 0.015, and
 POM = 0.01 match the existing OxyDep case. TEMP.csv and SALT.csv are not used.
 
@@ -29,8 +30,14 @@ using FjordSim: NorKystBoundaryDataConfig, fjord_data_root
 using FjordSim: BoundaryData, Grids, Plotting
 using FjordSim.Configs: AbstractBoundaryDataConfig
 
-const OXYDEP_TRACERS = ("NUT", "P", "HET", "POM", "DOM", "O\u2082")
-const CONSTANT_TRACERS = Dict("P" => 0.05, "HET" => 0.015, "POM" => 0.01)
+const OXYDEP_TRACERS = (
+    "NUT", "P", "HET", "POM", "DOM", "O\u2082",
+    "Ci_free", "Ci_PHY", "Ci_HET", "Ci_POM", "Ci_DOM",
+)
+const CONSTANT_TRACERS = Dict(
+    "P" => 0.05, "HET" => 0.015, "POM" => 0.01,
+    "Ci_free" => 0.0, "Ci_PHY" => 0.0, "Ci_HET" => 0.0, "Ci_POM" => 0.0, "Ci_DOM" => 0.0,
+)
 
 struct BoundaryProfile
     days::Vector{Int}

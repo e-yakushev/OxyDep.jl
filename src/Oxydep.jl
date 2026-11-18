@@ -26,6 +26,15 @@ Required submodels
 """
 module OXYDEPModel
 
+# ======================================================================
+# Switch: which variable groups are modelled.
+#   Ci_ = false → include only Oxydep_bgc.jl
+#                 (6 BGC tracers: NUT, P, HET, POM, DOM, O₂)
+#   Ci_ = true  → include Oxydep_bgc.jl AND Oxydep_Ci.jl
+#                 (adds Ci_free, Ci_PHY, Ci_HET, Ci_POM, Ci_DOM)
+# ======================================================================
+const Ci_ = false
+
 export OXYDEP
 export bgh_oxydep_boundary_conditions
 export oxydep_sediment_forcings
@@ -63,11 +72,6 @@ import OceanBioME: maximum_sinking_velocity
 import OceanBioME
 
 # =====================================================================
-# Switch: set to true to include Ci tracers and calculations, false for pure BGC
-# =====================================================================
-const Ci_ = false
-
-# =====================================================================
 # TOML parameter loader
 # =====================================================================
 
@@ -78,6 +82,7 @@ Read BGC parameters from `bgc_file`.  When `ci_file` is given (and Ci_ == true),
 also read Ci-specific parameters from that file and merge them in.
 Rate parameters are converted from 1/day to 1/s.  Sinking speeds likewise.
 Sediment parameters are applied to the module-level globals via `apply_sediment_config!`.
+`[O2].O2_suboxic` sets the shared water-column and sediment oxic/suboxic threshold.
 """
 function load_oxydep_params(bgc_file::AbstractString; ci_file::Union{AbstractString,Nothing}=nothing)
     cfg = TOML.parsefile(bgc_file)
@@ -487,4 +492,4 @@ if Ci_
     include("Oxydep_Ci.jl")
 end
 
-end  # module
+end

@@ -48,9 +48,10 @@ end
 const CSV_TRACERS = [
     CSVTracer("T", "temp", 1.0, 0.0),
     CSVTracer("S", "S", 1.0, 0.0),
-    CSVTracer("NUT", "N3_n", 1.0, 0.0),
-    CSVTracer("POM", "PON0", 1.0, 0.0),
-    CSVTracer("DOM", "R2_n", 1.0, 0.0),
+    CSVTracer("NUT", "NUT", 1.0, 0.0),
+    CSVTracer("POM", "POM", 1.0, 0.0),
+    CSVTracer("DOM", "DOM", 1.0, 0.0),
+    CSVTracer("Ci_free", "Ci_free", 1.0, 0.0),
 ]
 const CONSTANT_TRACERS = Dict("P" => 0.0, "HET" => 0.0, "O₂" => 300.0)
 
@@ -146,7 +147,7 @@ function Rivers.fetch_rivers(target_grid, config::CSVRiversConfig)
 end
 
 function read_river_csv(config, id, suffix, data_year)
-    path = joinpath(config.directory, "river_$(suffix)_from_$(id)_year_$(data_year).csv")
+    path = joinpath(config.directory, "$(suffix)_from_$(id)_year_$(data_year).csv")
     isfile(path) || error("Missing river CSV: $path")
     table, header = readdlm(path, ';', Float64; header = true)
     size(table, 1) > 0 && size(table, 2) >= 3 ||
@@ -201,8 +202,8 @@ end
 function Rivers.river_discharge(config::CSVRiversConfig, times)
     discharge = Matrix{Float64}(undef, length(config.locations), length(times))
     for (row, location) in enumerate(config.locations)
-        records = river_records(config, location.id, "N3_n")
-        indices = record_indices(config, records, times, location.id, "N3_n")
+        records = river_records(config, location.id, "NUT")
+        indices = record_indices(config, records, times, location.id, "NUT")
         discharge[row, :] = records.discharge[indices]
     end
     return discharge
@@ -215,13 +216,13 @@ function Rivers.river_series(config::CSVRiversConfig, times)
         series[tracer.name] = Matrix{Float64}(undef, shape)
     end
     for (row, location) in enumerate(config.locations)
-        reference = river_records(config, location.id, "N3_n")
+        reference = river_records(config, location.id, "NUT")
         for tracer in config.csv_tracers
             records = river_records(config, location.id, tracer.suffix)
             records.dates == reference.dates ||
-                error("River $(location.id): $(tracer.suffix) and N3_n have different date axes")
+                error("River $(location.id): $(tracer.suffix) and NUT have different date axes")
             all(isapprox.(records.discharge, reference.discharge; rtol = 1e-6, atol = 1e-8)) ||
-                error("River $(location.id): $(tracer.suffix) and N3_n have different discharges")
+                error("River $(location.id): $(tracer.suffix) and NUT have different discharges")
             indices = record_indices(config, records, times, location.id, tracer.suffix)
             series[tracer.name][row, :] =
                 tracer.scale .* records.concentration[indices] .+ tracer.offset
