@@ -25,14 +25,14 @@ r_het_nut = 0.15   # Respiration rate (1/d)
 r_het_pom = 0.10   # Mortality rate (1/d)
 
 [POM]
-r_pom_nut_oxy = 0.02  # Oxic decay rate (1/d)
-r_pom_dom = 0.15       # Decomposition rate (1/d)
+r_pom_nut_oxy = 0.01  # Oxic decay rate (1/d)
+r_pom_dom = 0.20       # Decomposition rate (1/d)
 
 [DOM]
-r_dom_nut_oxy = 0.05   # Oxic decay rate (1/d)
+r_dom_nut_oxy = 0.08   # Oxic decay rate (1/d)
 
 [O2]
-O2_suboxic = 20.0       # Oxic/suboxic threshold (mmol/m³)
+O2_suboxic = 30.0       # Shared water-column and sediment oxic/suboxic threshold (mmol/m³)
 r_pom_nut_nut = 0.002   # POM denitrification rate (1/d)
 r_dom_nut_nut = 0.002   # DOM denitrification rate (1/d)
 
@@ -49,11 +49,11 @@ POM = 11.0    # POM sinking speed (m/d)
 
 [sediment]
 Trel = 86400.0       # Relaxation time for sediment exchange (s)
-b_O2_ox = 3.0        # O₂ flux at SWI, oxic (mmol/m²/d)
-b_O2_subox = 3.0     # O₂ flux at SWI, suboxic (mmol/m²/d)
-b_NUT_ox = -0.4      # NUT flux at SWI, oxic (mmol/m²/d)
+b_O2_ox = 7.0        # O₂ flux at SWI, oxic (mmol/m²/d)
+b_O2_subox = 10.0     # O₂ flux at SWI, suboxic (mmol/m²/d)
+b_NUT_ox = -0.2      # NUT flux at SWI, oxic (mmol/m²/d)
 b_NUT_subox = 0.2    # NUT flux at SWI, suboxic (mmol/m²/d)
-b_DOM_ox = -0.5      # DOM flux at SWI, oxic (mmol/m²/d)
-b_DOM_subox = -0.8   # DOM flux at SWI, suboxic (mmol/m²/d)
-bu = 0.05            # Burial coefficient (0<bu<1) (nd)
+b_DOM_ox = -0.2      # DOM flux at SWI, oxic (mmol/m²/d)
+b_DOM_subox = -0.4   # DOM flux at SWI, suboxic (mmol/m²/d)
+bu = 0.001            # Burial coefficient (0<bu<1) (nd)
 windspeed = 5.0      # Wind speed at 10 m (m/s)

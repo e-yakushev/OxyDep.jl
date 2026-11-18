@@ -182,6 +182,8 @@ mutable struct CopernicusBoundaryDataConfig <: AbstractBoundaryDataConfig
     open_edges::Vector{Symbol}
     architecture::Symbol
     parameters::Vector{String}
+    start_date::DateTime       
+    stop_date::DateTime
 end
 
 function CopernicusBoundaryDataConfig(;
@@ -195,12 +197,14 @@ function CopernicusBoundaryDataConfig(;
     open_edges,
     architecture = :auto,
     parameters = collect(keys(COPERNICUS_BOUNDARY_VARIABLES)),
+    start_date = DateTime(2023, 1, 1),   
+    stop_date  = DateTime(2024, 1, 1),
 )
     edges = Grids.lateral_edges(open_edges)
     isempty(edges) && throw(ArgumentError("CopernicusBoundaryDataConfig names no `open_edges`."))
     return CopernicusBoundaryDataConfig(
         data_root, output_directory, source_file, sea_level_file, combined_file, output_file,
-        plot_file, edges, architecture, parameters,
+        plot_file, edges, architecture, parameters, start_date, stop_date, 
     )
 end
 
@@ -377,6 +381,8 @@ function aniva(;
             data_root = data_root,
             output_directory = "copernicus_1day",
             open_edges = :south,
+            start_date = DateTime(2023, 1, 1), 
+            stop_date  = DateTime(2024, 1, 1),   
         ),
         river_config = river_config,
         atmosphere_config = JRA55RYFConfig(data_root = data_root),
@@ -414,9 +420,9 @@ function aniva(;
             # it names CATKE's `e`, and a setup adding tracers must name those too.
             tracer_advection = (
                 T = isnothing(river_config) ? WENO(FT) :
-                    RiverMouthAdvection(interior = WENO(FT), width_cells = 2),
+                    RiverMouthAdvection(interior = WENO(FT), width_cells = 2, narrow_cells = true),
                 S = isnothing(river_config) ? WENO(FT; bounds = (0, 40)) :
-                    RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 2),
+                    RiverMouthAdvection(interior = WENO(FT; bounds = (0, 40)), width_cells = 2, narrow_cells = true),
                 e = WENO(FT),
             ),
             momentum_advection = WENOVectorInvariant(FT),
@@ -472,7 +478,7 @@ function aniva(;
             # The JRA55 repeat year is laid onto this calendar by `jra55_atmosphere.jl`, whose
             # START_DATE and STOP_DATE must match.
             start_date = DateTime(2023, 1, 1),
-            stop_time = 365days,
+            stop_date = DateTime(2024, 1, 1),
             loops = 1,
             pickup = false,
         ),

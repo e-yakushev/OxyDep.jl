@@ -130,6 +130,8 @@ Base.@kwdef mutable struct CopernicusBGCBoundaryDataConfig <: AbstractBoundaryDa
     open_edges::Vector{Symbol}
     architecture::Symbol
     parameters::Vector{String} = [entry.source for entry in values(COPERNICUS_BGC)]
+    start_date::DateTime = DateTime(2023, 1, 1)  
+    stop_date::DateTime  = DateTime(2024, 1, 1)
 end
 
 BoundaryData.boundary_variable_names(::CopernicusBGCBoundaryDataConfig) = copernicus_bgc_variable_names()
@@ -269,6 +271,8 @@ struct OxyDepBoundaryDataConfig <: AbstractBoundaryDataConfig
     open_edges::Vector{Symbol}
     architecture::Symbol
     parameters::Vector{String}
+    start_date::DateTime      
+    stop_date::DateTime
 end
 
 function OxyDepBoundaryDataConfig(base::CopernicusBoundaryDataConfig; output_file, plot_file)
@@ -283,6 +287,8 @@ function OxyDepBoundaryDataConfig(base::CopernicusBoundaryDataConfig; output_fil
         open_edges = base.open_edges,
         architecture = base.architecture,
         parameters = base.parameters,
+        start_date = base.start_date,   
+        stop_date  = base.stop_date, 
     )
     biogeochemistry = CopernicusBGCBoundaryDataConfig(
         data_root = base.data_root,
@@ -291,10 +297,13 @@ function OxyDepBoundaryDataConfig(base::CopernicusBoundaryDataConfig; output_fil
         plot_file = replace(plot_file, ".png" => "_bgc_intermediate.png"),
         open_edges = base.open_edges,
         architecture = base.architecture,
+        start_date = base.start_date,    
+        stop_date  = base.stop_date, 
     )
     return OxyDepBoundaryDataConfig(
         hydrophysics, biogeochemistry, base.data_root, output_file, plot_file, base.open_edges,
         base.architecture, base.parameters,
+        base.start_date, base.stop_date, 
     )
 end
 
@@ -312,9 +321,9 @@ function BoundaryData.fetch_boundary_data(target_grid, config::OxyDepBoundaryDat
     return combine_copernicus_bgc(config.data_root, config.biogeochemistry.output_directory)
 end
 
-function BoundaryData.regrid_boundary_data(target_grid, config::OxyDepBoundaryDataConfig; coverage = nothing)
-    result = BoundaryData.regrid_boundary_data(target_grid, config.hydrophysics; coverage)
-    regridded = BoundaryData.regrid_boundary_data(target_grid, config.biogeochemistry; coverage)
+function BoundaryData.regrid_boundary_data(target_grid, config::OxyDepBoundaryDataConfig)
+    result = BoundaryData.regrid_boundary_data(target_grid, config.hydrophysics)
+    regridded = BoundaryData.regrid_boundary_data(target_grid, config.biogeochemistry)
     profile = read_oxygen_profile(joinpath(config.data_root, OXYGEN_PROFILE_FILE))
 
     NCDataset(regridded.output_file) do bgc
@@ -508,7 +517,7 @@ function aniva_oxydep(;
                 results_directory = initial_results_directory,
             ),
             start_date = run.start_date,
-            stop_time = run.stop_time,
+            stop_date = run.stop_date,
             loops = run.loops,
             pickup = pickup,
         ),

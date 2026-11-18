@@ -66,6 +66,7 @@ function plot_ztime(NUT, O₂, O₂_sat, PHY, HET, T, DOM, POM, S, i, j, times, 
         ylabel = "z (m)",
         xticks = (0:50:times[end]),
         xtickformat = "{:.0f}",
+        limits = (nothing, (-100, 0)),
     )
 
     axNUT = Axis(fig[1, 1]; title="NUT [μM N]", axis_kwargs...)
@@ -450,7 +451,9 @@ function plot_tracer_subplot_map!(fig, pos, data, title_str, longitudes, latitud
     end
 
     ax = Axis(fig[pos...]; title=title_str,
+              limits = (142.15, 143.45, 46.03, 46.75),
               width=180, height=300,
+              xticks = [142.2, 142.8, 143.4],
               xlabel="Longitude (°E)", ylabel="Latitude (°N)")
 
     # Land cells arrive as NaN (drawn with `nan_color`); push water cells at or below
@@ -584,6 +587,7 @@ function record_horizontal_tracer(tracer, times, folder, name, label,
 
     fig = Figure(size=(400, 550), fontsize=20)
     ax  = Axis(fig[1, 1]; title=title,
+               limits = (142.15, 143.45, 46.03, 46.75),
                xlabel="Longitude (°E)", ylabel="Latitude (°N)")
     hm  = heatmap!(ax, longitudes, latitudes, Ti,
                    colorrange=colorrange, colormap=colormap,
@@ -629,6 +633,7 @@ function record_bottom_tracer(variable, var_name, Nz, times, folder,
     title = @lift "bottom $(var_name), μM at " * prettydays(times[$iter])
     fig = Figure(size=figsize)
     ax  = Axis(fig[1, 1]; title=title,
+               limits = (142.15, 143.45, 46.03, 46.75),
                xlabel="Longitude (°E)", ylabel="Latitude (°N)")
     hm  = heatmap!(ax, longitudes, latitudes, f,
                    colorrange=colorrange, colormap=colormap,

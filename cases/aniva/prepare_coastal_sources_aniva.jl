@@ -3,27 +3,34 @@ Run from this directory: julia prepare_coastal_sources_aniva.jl
 
 Reads rivers_aniva/ and bathymetry_aniva.nc under fjord_data_root("aniva"), then writes
 forcing_rivers_oxydep.nc in the current FjordSim river-file format. No downloads are made.
-The CSVs are daily 2024 data used as a seasonal proxy for the 2023 run. The default window
-is 2023-01-01 through 2024-01-01: observations are mapped by month/day, 29 February is
-omitted, and the final daily record is held for the padding day. The output metadata records
-this assumption. AnivaRiversConfig(target_year=nothing) preserves the original 2024 dates.
+Source CSVs are daily 2023 observations; the target window is 2023-01-01 through
+2024-01-01, with the final daily record held for the padding day. All tracers, including
+oxygen, are read directly from CSV — no parameterization.
 
 River coordinates below are longitude, latitude. FjordSim snaps them to coastal water cells
 and spreads their volume over connected columns to limit inflow speed to 1e-3 m/s.
 For a 1 m surface layer and a 180 s step this gives a vertical inflow Courant number of 0.18.
 
 CSV column 3 is concentration, not a discharge-weighted load: T is degrees Celsius,
-S is freshwater salinity (zero in these files), and NUT/DOM are mmol N/m3. Leading blank
-NUT/DOM concentrations are held at the first available value, with a warning and metadata.
-Interior/trailing missing concentrations are errors. P, HET and POM are explicitly zero.
-Oxygen is 100% air saturation using OceanBioME Garcia-Gordon (1992), river T/S and 1 atm,
-in mmol O2/m3. No oxygen-profile or atmosphere file is required.
+S is freshwater salinity (zero in these files), NUT/DOM are mmol N/m3, and O₂ is
+mmol O2/m3. Leading blank NUT/DOM concentrations are held at the first available value,
+with a warning and metadata; interior/trailing missing concentrations, and any missing
+T/S/O₂ values, are errors. P, HET and POM are explicitly zero.
+
+Required input files, one set per river id in RIVER_LOCATIONS and year in `years`
+(2023 by default):
+  river_temp_from_<id>_year_<year>.csv
+  river_S_from_<id>_year_<year>.csv
+  river_N3_n_from_<id>_year_<year>.csv
+  river_R2_n_from_<id>_year_<year>.csv
+  river_O2_from_<id>_year_<year>.csv
 
 Including this file defines AnivaCoastalSources.AnivaRiversConfig, usable as river_config
 in a FjordSim setup. To replace an existing output, call
 AnivaCoastalSources.main(overwrite=true). Direct execution never overwrites existing output.
 FJORDSIM_PROJECT overrides the sibling FjordSim.jl environment used for direct execution.
 =#
+
 if abspath(PROGRAM_FILE) == abspath(@__FILE__)
     import Pkg
     project_directory = abspath(get(ENV, "FJORDSIM_PROJECT",
@@ -41,15 +48,12 @@ using DelimitedFiles: readdlm
 using FjordSim: Rivers, Grids, fjord_data_root
 using FjordSim.Configs: AbstractRiverConfig
 using FjordSim.Rivers: RiverLocation
-using Oceananigans: CPU, RectilinearGrid
-using Oceananigans.Fields: ConstantField
-using OceanBioME.Models.GasExchangeModel: GarciaGordonOxygenSaturation, surface_value
+using Oceananigans: CPU
 using NCDatasets: NCDataset, defVar
 
 include(joinpath(@__DIR__, "..", "inneroslofjorden", "prepare_coastal_sources_oxydep.jl"))
 using .CoastalRiverSources: CSVRiversConfig, CSVTracer
 
-const OXYGEN_NAME = "O\u2082"
 const RIVER_LOCATIONS = [
     RiverLocation(1, "Lyutoga", 142.5302243, 46.6978129),
     RiverLocation(2, "Susuya", 142.723888, 46.7427152),
@@ -66,7 +70,7 @@ function AnivaRiversConfig(;
     data_root = fjord_data_root("aniva"),
     directory = joinpath(data_root, "rivers_aniva"),
     output_file = "forcing_rivers_oxydep.nc",
-    years = [2024],
+    years = [2023],
     search_radius = 10,
     maximum_inflow_velocity = 1e-3,
     locations = RIVER_LOCATIONS,
@@ -77,7 +81,7 @@ function AnivaRiversConfig(;
     missing_concentrations in (:hold_first, :error) ||
         throw(ArgumentError("missing_concentrations must be :hold_first or :error"))
     Set(keys(constants)) == Set(("P", "HET", "POM")) ||
-        throw(ArgumentError("Specify constants for P, HET and POM only; oxygen is calculated"))
+        throw(ArgumentError("Specify constants for P, HET and POM only; oxygen is read from CSV"))
     all(>=(0), values(constants)) || throw(ArgumentError("Tracer constants must be non-negative"))
     isnothing(target_year) || length(years) == 1 ||
         throw(ArgumentError("A seasonal proxy requires exactly one source year"))
@@ -85,8 +89,9 @@ function AnivaRiversConfig(;
         data_root, directory, output_file, years, search_radius, maximum_inflow_velocity,
         locations, constants,
         plot_file = "forcing_rivers_oxydep.png",
-        csv_tracers = [CSVTracer(name, suffix, 1.0, 0.0)
-                      for (name, suffix) in (("T", "temp"), ("S", "S"), ("NUT", "N3_n"), ("DOM", "R2_n"))],
+        csv_tracers = [CSVTracer(name, suffix, 1.0, 0.0) for (name, suffix) in (
+                ("T", "temp"), ("S", "S"), ("NUT", "N3_n"),
+                ("DOM", "R2_n"), ("O₂", "O2"))],
         discharge_directions = Dict(location.id => 1 for location in locations),
     )
     return AnivaRiversConfig(base, joinpath(data_root, output_file), missing_concentrations, target_year)
@@ -185,14 +190,6 @@ function Rivers.river_series(config::AnivaRiversConfig, times)
             series[tracer.name][row, :] = records.concentration[indices]
         end
     end
-    saturation = GarciaGordonOxygenSaturation(Float64)
-    grid = RectilinearGrid(CPU(), Float64; size = (1, 1, 1), extent = (1, 1, 1))
-    oxygen = Matrix{Float64}(undef, shape)
-    for index in eachindex(oxygen)
-        fields = (T = ConstantField(series["T"][index]), S = ConstantField(series["S"][index]))
-        oxygen[index] = surface_value(saturation, 1, 1, grid, nothing, fields)
-    end
-    series[OXYGEN_NAME] = oxygen
     return series
 end
 
@@ -225,10 +222,10 @@ function main(;
             dataset.attrib["missing_concentration_policy"] = string(config.missing_concentrations)
             dataset.attrib["concentration_gap_assumption"] = "Leading NUT/DOM blanks held at first available value when policy is hold_first"
             dataset.attrib["constant_tracers_mmol_m3"] = join(["$name=$(config.base.constants[name])" for name in sort(collect(keys(config.base.constants)))], ", ")
-            dataset.attrib["oxygen_saturation"] = "100 percent; OceanBioME Garcia-Gordon (1992); atmospheric pressure 101325 Pa"
+            dataset.attrib["oxygen_source"] = "river_O2_from_<id>_year_2023.csv (observations)"
             dataset.attrib["time_policy"] = isnothing(config.target_year) ?
                 "CSV calendar years retained; final daily record held for one padding day only" :
-                "Seasonal proxy: source $(only(config.base.years)) mapped by month/day to $(config.target_year); February 29 omitted for a non-leap target; final day held for one padding day"
+                "Source year $(only(config.base.years)) mapped by month/day to $(config.target_year); final day held for one padding day"
             longitude, latitude = NCDataset(bathymetry_file) do bathymetry
                 return bathymetry["lon"][:], bathymetry["lat"][:]
             end

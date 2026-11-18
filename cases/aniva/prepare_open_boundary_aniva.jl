@@ -174,8 +174,8 @@ function prepare_open_boundary_aniva(;
             output_file = joinpath(directory, "boundaries_aniva.nc"),
             plot_file = joinpath(directory, "boundaries_aniva.png"),
         )
-        result = BoundaryData.regrid_boundary_data(grid, config.hydrophysics; coverage)
-        bgc = BoundaryData.regrid_boundary_data(grid, config.biogeochemistry; coverage)
+        result = BoundaryData.regrid_boundary_data(grid, config.hydrophysics)
+        bgc = BoundaryData.regrid_boundary_data(grid, config.biogeochemistry)
         merge_saturated_boundary_bgc!(result.output_file, bgc.output_file, atmosphere_file, config, grid)
         expected = [BoundaryData.boundary_variable_name(edge, name)
                     for edge in config.open_edges
