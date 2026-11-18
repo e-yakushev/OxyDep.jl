@@ -33,7 +33,7 @@ module OXYDEPModel
 #   Ci_ = true  → include Oxydep_bgc.jl AND Oxydep_Ci.jl
 #                 (adds Ci_free, Ci_PHY, Ci_HET, Ci_POM, Ci_DOM)
 # ======================================================================
-const Ci_ = false
+const Ci_ = true
 
 export OXYDEP
 export bgh_oxydep_boundary_conditions
