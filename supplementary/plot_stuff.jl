@@ -7,13 +7,23 @@ using Oceananigans.Utils: maybe_int
 # Number of seconds in a day (for time conversion)
 const days = 24 * 60 * 60
 
+# Shared colours for every map, animation and transect: land / absence of data
+# is light grey, and a genuine zero (water) value is shown distinctly from the
+# variable's colour scheme via the heatmap's `lowclip`.
+const LAND_COLOR = :lightgray
+const ZERO_COLOR = :white
+
 export prettydays,
        replace_zeros_with_NaN!,
+       raw_slice,
+       mark_water_zeros!,
+       tracer_colorrange,
+       LAND_COLOR,
+       ZERO_COLOR,
        get_interior,
        plot_ztime,
        plot_param_transect,
        plot_bottom_depth_map!,
-       compute_transect,
        compute_pressure_from_depth,
        compute_oxygen_saturation_fields,
        compute_bottom_index_from_O2,
@@ -43,9 +53,43 @@ function replace_zeros_with_NaN!(A, depth_index, day_index)
     return slice
 end
 
+# Raw horizontal slice (land/dry cells stay as stored zeros). Land is masked
+# separately from genuine zero concentrations by the plotting functions, which
+# receive a `landmask` derived from the water mask.
+function raw_slice(A, depth_index, day_index)
+    return Float64.(view(A, :, :, depth_index, day_index))
+end
+
+# Push exact-zero (water) cells just below `lower` so a heatmap drawn with
+# `lowclip = ZERO_COLOR` renders them in the zero colour instead of the bottom
+# of the colour scheme. Land/no-data cells are expected to be NaN already and
+# are left untouched (NaN compares false here).
+function mark_water_zeros!(A, lower)
+    sentinel = float(lower) - abs(float(lower)) - one(float(lower))
+    @. A = ifelse(A == 0, sentinel, A)
+    return A
+end
+
+# Colour range for a land-masked field: the configured range when given, else
+# the extrema of the finite (water) values.
+function tracer_colorrange(field, colorrange)
+    colorrange === nothing || return colorrange
+    finite = filter(isfinite, vec(field))
+    return isempty(finite) ? (0.0, 1.0) : extrema(finite)
+end
+
 # Helper for interior vs plain arrays
 get_interior(A, inds...) =
     hasmethod(interior, Tuple{typeof(A),Vararg{Any}}) ? interior(A, inds...) : A[inds...]
+
+# Below-bottom cells in a point's depth–time slice are stored as exact zeros;
+# turn them into NaN so a heatmap drawn with `nan_color = LAND_COLOR` shows the
+# bottom in the land colour instead of the low end of the colour scheme.
+function bottom_to_nan(slice)
+    masked = Float64.(slice)
+    @. masked = ifelse(masked == 0, NaN, masked)
+    return masked
+end
 
 # ----------------------------------------------------------
 # Plot: vertical distributions at a point
@@ -62,52 +106,52 @@ function plot_ztime(NUT, O₂, O₂_sat, PHY, HET, T, DOM, POM, S, i, j, times, 
     )
 
     axNUT = Axis(fig[1, 1]; title="NUT [μM N]", axis_kwargs...)
-    hmNUT = heatmap!(times / days, z, get_interior(NUT, i, j, :, :)',
-                     colormap=Reverse(:cherry))
+    hmNUT = heatmap!(times / days, z, bottom_to_nan(get_interior(NUT, i, j, :, :)'),
+                     colormap=Reverse(:cherry), nan_color=LAND_COLOR)
     Colorbar(fig[1, 2], hmNUT)
 
     axOXY = Axis(fig[1, 3]; title="O₂ [μM]", axis_kwargs...)
-    O₂_slice = get_interior(O₂, i, j, :, :)'
-    hmOXY = heatmap!(times / days, z, O₂_slice, colormap=:turbo)
+    O₂_slice = bottom_to_nan(get_interior(O₂, i, j, :, :)')
+    hmOXY = heatmap!(times / days, z, O₂_slice, colormap=:turbo, nan_color=LAND_COLOR)
     contour!(times / days, z, O₂_slice; levels=[67], color=:white,
              linewidth=4, linestyle=:dot)
     Colorbar(fig[1, 4], hmOXY)
 
     axOXY_rel = Axis(fig[1, 5]; title="O₂ saturation [%]", axis_kwargs...)
-    O₂_sat_slice = get_interior(O₂_sat, i, j, :, :)'
-    hmOXY_rel = heatmap!(times / days, z, O₂_sat_slice, colormap=:gist_stern)
+    O₂_sat_slice = bottom_to_nan(get_interior(O₂_sat, i, j, :, :)')
+    hmOXY_rel = heatmap!(times / days, z, O₂_sat_slice, colormap=:gist_stern, nan_color=LAND_COLOR)
     contour!(times / days, z, O₂_sat_slice; levels=[100], color=:white,
              linewidth=4, linestyle=:dot)
     Colorbar(fig[1, 6], hmOXY_rel)
 
     axPHY = Axis(fig[2, 1]; title="PHY [μM N]", axis_kwargs...)
-    hmPHY = heatmap!(times / days, z, get_interior(PHY, i, j, :, :)',
-                     colormap=Reverse(:cubehelix))
+    hmPHY = heatmap!(times / days, z, bottom_to_nan(get_interior(PHY, i, j, :, :)'),
+                     colormap=Reverse(:cubehelix), nan_color=LAND_COLOR)
     Colorbar(fig[2, 2], hmPHY)
 
     axHET = Axis(fig[2, 3]; title="HET [μM N]", axis_kwargs...)
-    hmHET = heatmap!(times / days, z, get_interior(HET, i, j, :, :)',
-                     colormap=Reverse(:afmhot))
+    hmHET = heatmap!(times / days, z, bottom_to_nan(get_interior(HET, i, j, :, :)'),
+                     colormap=Reverse(:afmhot), nan_color=LAND_COLOR)
     Colorbar(fig[2, 4], hmHET)
 
     axT = Axis(fig[2, 5]; title="T [°C]", axis_kwargs...)
-    hmT = heatmap!(times / days, z, get_interior(T, i, j, :, :)',
-                   colormap=Reverse(:RdYlBu))
+    hmT = heatmap!(times / days, z, bottom_to_nan(get_interior(T, i, j, :, :)'),
+                   colormap=Reverse(:RdYlBu), nan_color=LAND_COLOR)
     Colorbar(fig[2, 6], hmT)
 
     axDOM = Axis(fig[3, 1]; title="DOM [μM N]", axis_kwargs...)
-    hmDOM = heatmap!(times / days, z, get_interior(DOM, i, j, :, :)',
-                     colormap=Reverse(:CMRmap))
+    hmDOM = heatmap!(times / days, z, bottom_to_nan(get_interior(DOM, i, j, :, :)'),
+                     colormap=Reverse(:CMRmap), nan_color=LAND_COLOR)
     Colorbar(fig[3, 2], hmDOM)
 
     axPOM = Axis(fig[3, 3]; title="POM [μM N]", axis_kwargs...)
-    hmPOM = heatmap!(times / days, z, get_interior(POM, i, j, :, :)',
-                     colormap=Reverse(:greenbrownterrain))
+    hmPOM = heatmap!(times / days, z, bottom_to_nan(get_interior(POM, i, j, :, :)'),
+                     colormap=Reverse(:greenbrownterrain), nan_color=LAND_COLOR)
     Colorbar(fig[3, 4], hmPOM)
 
     axS = Axis(fig[3, 5]; title="S [psu]", axis_kwargs...)
-    hmS = heatmap!(times / days, z, get_interior(S, i, j, :, :)',
-                   colormap=:viridis)
+    hmS = heatmap!(times / days, z, bottom_to_nan(get_interior(S, i, j, :, :)'),
+                   colormap=:viridis, nan_color=LAND_COLOR)
     Colorbar(fig[3, 6], hmS)
 
     save(joinpath(folder, "ztime_$(i)_$(j).png"), fig)
@@ -119,7 +163,8 @@ end
 # ----------------------------------------------------------
 
 function plot_param_transect(Par_transect_slice, title_str, depth, transect, folder;
-                             colormap=:turbo, day_index=1, whiteline=1.0, colorrange=nothing)
+                             colormap=:turbo, day_index=1, whiteline=1.0, colorrange=nothing,
+                             landmask=nothing)
 
     depth = vec(depth)
     nmax  = length(transect)
@@ -138,40 +183,38 @@ function plot_param_transect(Par_transect_slice, title_str, depth, transect, fol
                title="$title_str transect for day: $day_index",
                yreversed=false)
 
-    data_plot = copy(Par_transect_slice)
-    nan_mask  = isnan.(data_plot)
+    data_plot = Float64.(Par_transect_slice)
+    if landmask !== nothing && size(landmask) == size(data_plot)
+        data_plot[landmask] .= NaN
+    end
+    land_mask = isnan.(data_plot)
 
-    if any(.!nan_mask)
-        valid_data = data_plot[.!nan_mask]
-        vmin, vmax = extrema(valid_data)
-        offset = 0.1 * abs(vmax - vmin)
-        data_plot[nan_mask] .= vmin - offset
-
-        cr = isnothing(colorrange) ? (vmin, vmax) : colorrange
+    if any(.!land_mask)
+        cr = tracer_colorrange(data_plot, colorrange)
+        mark_water_zeros!(data_plot, cr[1])
         hm = heatmap!(ax, dist, depth, data_plot;
                       colorrange=cr,
                       colormap=colormap,
                       interpolate=false,
-                      nan_color=:silver)
+                      nan_color=LAND_COLOR,
+                      lowclip=ZERO_COLOR)
     else
         data_plot .= 0.0
         hm = heatmap!(ax, dist, depth, data_plot;
                       colorrange=(0.0, 1.0),
-                      colormap=[:silver],
+                      colormap=[LAND_COLOR],
                       interpolate=false)
     end
 
     if whiteline != 0.0
-        contour_data = copy(Par_transect_slice)
-        if any(nan_mask)
-            contour_data[nan_mask] .= whiteline + 1000.0
-        end
+        contour_data = Float64.(Par_transect_slice)
+        contour_data[land_mask] .= whiteline + 1000.0
         contour!(ax, dist, depth, contour_data;
                  levels=[whiteline], color=:white,
                  linewidth=4, linestyle=:dot)
     end
 
-    if any(.!nan_mask)
+    if any(.!land_mask)
         Colorbar(fig[1, 2], hm, label=title_str, width=25)
     end
 
@@ -181,7 +224,7 @@ function plot_param_transect(Par_transect_slice, title_str, depth, transect, fol
     save(filename, fig, px_per_unit=2)
 
     @info "Saved plot to $filename"
-    println("NaN pixels $(sum(nan_mask)) of $(length(nan_mask))")
+    println("Land pixels $(sum(land_mask)) of $(length(land_mask))")
 
     return fig
 end
@@ -207,7 +250,7 @@ function plot_bottom_depth_map!(fig, pos, bottom_z::AbstractMatrix{<:Integer}, z
               width=200, height=300,
               xlabel="", ylabel="")
     hm = heatmap!(ax, depth_map; colorrange=colorrange,
-                  colormap=colormap, nan_color=:silver)
+                  colormap=colormap, nan_color=LAND_COLOR)
     if whiteline != 0.0
         contour!(ax, depth_map; levels=[whiteline], color=:white,
                  linewidth=4, linestyle=:dot)
@@ -216,100 +259,8 @@ function plot_bottom_depth_map!(fig, pos, bottom_z::AbstractMatrix{<:Integer}, z
 end
 
 # ----------------------------------------------------------
-# Bottom_z, transect, pressure, oxygen saturation
+# Pressure, oxygen saturation
 # ----------------------------------------------------------
-
-function compute_transect(bottom_z, Nz)
-    transect = Vector{Tuple{Int,Int,Int,Int}}()
-    num   = 1
-    lier  = 0
-    drammen = 0
-    oslo  = 1
-
-    if drammen == 1
-        println("Computing transect for Drammen fjord...")
-        for j in 1:66
-            max_depth_index = Nz
-            for i in 1:17
-                if max_depth_index < bottom_z[i+1, j]
-                    push!(transect, (num, i, j, max_depth_index))
-                    num += 1
-                    break
-                end
-                max_depth_index = bottom_z[i+1, j]
-            end
-        end
-    end
-
-    if lier == 1
-        println("Computing transect for Lier bay fjord...")
-        for j in 1:14
-            max_depth_index = Nz
-            for i in 1:11
-                if max_depth_index < bottom_z[i+1, j]
-                    push!(transect, (num, i, j, max_depth_index))
-                    num += 1
-                    break
-                end
-                max_depth_index = bottom_z[i+1, j]
-            end
-        end
-    end
-
-    if oslo == 1
-        println("Computing transect for Oslo fjord...")
-        
-        for j in 1:25 #62 #71
-            max_depth_index = 18 #16 #12
-            for i in 38:-1:1 #27:-1:14
-                if max_depth_index < bottom_z[i-1, j]
-                    push!(transect, (num, i, j, max_depth_index))
-                    num += 1
-                    break
-                end
-                max_depth_index = bottom_z[i-1, j]
-            end
-        end
-        for j in 25:35 #62 #71
-            max_depth_index = 18 #16 #12
-            for i in 30:-1:1 #27:-1:14
-                if max_depth_index < bottom_z[i-1, j]
-                    push!(transect, (num, i, j, max_depth_index))
-                    num += 1
-                    break
-                end
-                max_depth_index = bottom_z[i-1, j]
-            end
-        end
-        
-        for j in 36:100 #62 #71
-            max_depth_index = 18 #16 #12
-            for i in 38:-1:1 #27:-1:14
-                if max_depth_index < bottom_z[i-1, j]
-                    push!(transect, (num, i, j, max_depth_index))
-                    num += 1
-                    break
-                end
-                max_depth_index = bottom_z[i-1, j]
-            end
-        end
-
-        for j in 100:-1:40 #71:-1:34
-            max_depth_index = 18
-            for i in 38:1:50 #27:44
-                if max_depth_index < bottom_z[i+1, j]
-                    push!(transect, (num, i, j, max_depth_index))
-                    num += 1
-                    break
-                end
-                max_depth_index = bottom_z[i+1, j]
-            end
-        end
-    end
-
-    println("✅ Total transect points found: ", length(transect))
-    return transect
-end
 
 function compute_pressure_from_depth(T, depth, Nz)
     Pressure = similar(T[:, :, :, 1])
@@ -408,7 +359,8 @@ function make_bottom_depth_and_transect_figure(folder, bottom_z, depth, real_lon
     depth_map = abs.(depth_map)
     @. depth_map = ifelse(bottom_z == 0, NaN, depth_map)
 
-    hm = heatmap!(ax_depth, real_lon, real_lat, depth_map; colormap=Reverse(:oslo25))
+    hm = heatmap!(ax_depth, real_lon, real_lat, depth_map; colormap=Reverse(:oslo25),
+                  nan_color=LAND_COLOR)
     Colorbar(fig_depth_map[1, 2], hm, label="Depth (m)")
 
     CairoMakie.lines!(ax_depth, lon_vals, lat_vals;
@@ -425,7 +377,8 @@ end
 # ----------------------------------------------------------
 
 function plot_tracer_subplot_map!(fig, pos, data, title_str, longitudes, latitudes;
-                                  colorrange=(0, 1), colormap=:viridis, whiteline=1.0)
+                                  colorrange=(0, 1), colormap=:viridis, whiteline=1.0,
+                                  landmask=nothing)
     ni, nj = size(data)
     # Re-interpolate coordinate ranges when data dimensions differ (staggered u/v grids)
     if length(longitudes) != ni
@@ -439,11 +392,23 @@ function plot_tracer_subplot_map!(fig, pos, data, title_str, longitudes, latitud
               width=180, height=300,
               xlabel="Longitude (°E)", ylabel="Latitude (°N)")
 
-    hm = heatmap!(ax, longitudes, latitudes, data;
-                  colorrange=colorrange, colormap=colormap, nan_color=:silver)
+    field = Float64.(data)
+    if landmask !== nothing && size(landmask) == size(field)
+        field[landmask] .= NaN
+    end
+    cr = tracer_colorrange(field, colorrange)
+    mark_water_zeros!(field, cr[1])
+
+    hm = heatmap!(ax, longitudes, latitudes, field;
+                  colorrange=cr, colormap=colormap,
+                  nan_color=LAND_COLOR, lowclip=ZERO_COLOR)
 
     if whiteline != 0.0
-        contour!(ax, longitudes, latitudes, data;
+        contour_data = Float64.(data)
+        if landmask !== nothing && size(landmask) == size(contour_data)
+            contour_data[landmask] .= whiteline + 1000.0
+        end
+        contour!(ax, longitudes, latitudes, contour_data;
                  levels=[whiteline], color=:white,
                  linewidth=4, linestyle=:dot)
     end
@@ -480,16 +445,6 @@ function bottom_slices_at_day(T, S, O₂, P, HET, O₂_sat, DOM, POM, NUT, botto
         NUT_slice_bot[i, j]    = Float64(NUT[i, j, z, day_index])
     end
 
-    @. T_slice_bot      = ifelse(T_slice_bot == 0, NaN, T_slice_bot)
-    @. S_slice_bot      = ifelse(S_slice_bot == 0, NaN, S_slice_bot)
-    @. O₂_slice_bot     = ifelse(O₂_slice_bot == 0, NaN, O₂_slice_bot)
-    @. P_slice_bot      = ifelse(P_slice_bot == 0, NaN, P_slice_bot)
-    @. HET_slice_bot    = ifelse(HET_slice_bot == 0, NaN, HET_slice_bot)
-    @. O₂_sat_slice_bot = ifelse(O₂_sat_slice_bot == 0, NaN, O₂_sat_slice_bot)
-    @. DOM_slice_bot    = ifelse(DOM_slice_bot == 0, NaN, DOM_slice_bot)
-    @. POM_slice_bot    = ifelse(POM_slice_bot == 0, NaN, POM_slice_bot)
-    @. NUT_slice_bot    = ifelse(NUT_slice_bot == 0, NaN, NUT_slice_bot)
-
     return T_slice_bot, S_slice_bot, O₂_slice_bot,
            P_slice_bot, HET_slice_bot, O₂_sat_slice_bot,
            DOM_slice_bot, POM_slice_bot, NUT_slice_bot
@@ -502,20 +457,25 @@ end
 function record_horizontal_tracer(tracer, times, folder, name, label,
                                   longitudes, latitudes;
                                   colorrange=(-1, 30), colormap=:magma,
-                                  iz=10, speed=3.0) # speed in model days per second
+                                  iz=10, speed=3.0, water_mask=nothing) # speed in model days per second
     dt_days = (times[2] - times[1]) / 86400.0  # snapshot interval in days
     framerate = max(1, round(Int, speed / dt_days))
     Nt = length(times)
+    landmask = water_mask === nothing ? nothing : .!view(water_mask, :, :, iz)
+    lower = colorrange === nothing ? 0.0 : colorrange[1]
     iter = Observable(1)
     Ti = @lift begin
         if tracer isa AbstractArray
-            Ti = tracer[:, :, iz, $iter]
+            Ti = Float64.(tracer[:, :, iz, $iter])
         elseif tracer isa FieldTimeSeries
-            Ti = interior(tracer[$iter], :, :, iz)
+            Ti = Float64.(interior(tracer[$iter], :, :, iz))
         else
             error("Unsupported tracer type: $(typeof(tracer))")
         end
-        Ti[Ti .== 0] .= NaN
+        if landmask !== nothing && size(landmask) == size(Ti)
+            Ti[landmask] .= NaN
+        end
+        mark_water_zeros!(Ti, lower)
         Ti
     end
     title = @lift "$label at $(prettydays(times[$iter]))"
@@ -525,7 +485,7 @@ function record_horizontal_tracer(tracer, times, folder, name, label,
                xlabel="Longitude (°E)", ylabel="Latitude (°N)")
     hm  = heatmap!(ax, longitudes, latitudes, Ti,
                    colorrange=colorrange, colormap=colormap,
-                   nan_color=:silver)
+                   nan_color=LAND_COLOR, lowclip=ZERO_COLOR)
     Colorbar(fig[0, 1], hm, vertical=false)
 
     record(fig, joinpath(folder, "movie_$(name)_iz_$iz.gif"), 1:Nt,
@@ -538,7 +498,7 @@ end
 function record_bottom_tracer(variable, var_name, Nz, times, folder,
                               longitudes, latitudes;
                               colorrange=(-1, 350), colormap=:turbo,
-                              figsize=(1000, 400), speed=3.0)
+                              figsize=(1000, 400), speed=3.0, water_mask=nothing)
     dt_days = (times[2] - times[1]) / 86400.0  # snapshot interval in days
     framerate = max(1, round(Int, speed / dt_days))
     bottom_z = ones(Int, size(variable, 1), size(variable, 2))
@@ -556,11 +516,18 @@ function record_bottom_tracer(variable, var_name, Nz, times, folder,
         end
     end
 
+    landmask = water_mask === nothing ? nothing :
+               .!dropdims(any(water_mask, dims=3), dims=3)
+    lower = colorrange === nothing ? 0.0 : colorrange[1]
+
     iter = Observable(1)
     f = @lift begin
-        x = [variable[i, j, bottom_z[i, j], $iter]
+        x = [Float64(variable[i, j, bottom_z[i, j], $iter])
              for i in 1:size(variable, 1), j in 1:size(variable, 2)]
-        x[x .== 0] .= NaN
+        if landmask !== nothing && size(landmask) == size(x)
+            x[landmask] .= NaN
+        end
+        mark_water_zeros!(x, lower)
         x
     end
 
@@ -569,7 +536,8 @@ function record_bottom_tracer(variable, var_name, Nz, times, folder,
     ax  = Axis(fig[1, 1]; title=title,
                xlabel="Longitude (°E)", ylabel="Latitude (°N)")
     hm  = heatmap!(ax, longitudes, latitudes, f,
-                   colorrange=colorrange, colormap=colormap)
+                   colorrange=colorrange, colormap=colormap,
+                   nan_color=LAND_COLOR, lowclip=ZERO_COLOR)
     Colorbar(fig[0, 1], hm, vertical=false, label="$(var_name), μM")
 
     Nt = length(times)
@@ -607,7 +575,7 @@ end
 
 function plot_six_animations_365_days(tracers, times_seconds, folder, labels, longitudes, latitudes;
                                       colorranges, colormaps, iz, framerate=1,
-                                      figsize=(1800, 1200), fontsize=24)
+                                      figsize=(1800, 1200), fontsize=24, water_mask=nothing)
     day_indices = get_365_days_indices(times_seconds, 365)
     Nt          = length(day_indices)
 
@@ -615,6 +583,8 @@ function plot_six_animations_365_days(tracers, times_seconds, folder, labels, lo
     current_frame = Observable(1)
 
     times_days = times_seconds ./ (24 * 3600)
+
+    landmask = water_mask === nothing ? nothing : .!view(water_mask, :, :, iz)
 
     fig = Figure(size=figsize, fontsize=fontsize)
     axes_vec     = Any[]
@@ -629,6 +599,7 @@ function plot_six_animations_365_days(tracers, times_seconds, folder, labels, lo
                   ylabel=(col == 1 ? "Latitude (°N)" : ""),
                   title=labels[i])
 
+        lower = colorranges[i] === nothing ? 0.0 : colorranges[i][1]
         Ti = @lift begin
             tracer_data = tracers[i]
             frame_idx   = day_indices[$day_iter]
@@ -638,14 +609,17 @@ function plot_six_animations_365_days(tracers, times_seconds, folder, labels, lo
                 error("Expected 4D array, got $(ndims(tracer_data))D")
             end
             Ti_val = Float64.(Ti_val)
-            Ti_val[Ti_val .== 0] .= NaN
+            if landmask !== nothing && size(landmask) == size(Ti_val)
+                Ti_val[landmask] .= NaN
+            end
+            mark_water_zeros!(Ti_val, lower)
             Ti_val
         end
 
         hm = heatmap!(ax, longitudes, latitudes, Ti,
                       colorrange=colorranges[i],
                       colormap=colormaps[i],
-                      nan_color=:white)
+                      nan_color=LAND_COLOR, lowclip=ZERO_COLOR)
         Colorbar(fig[row, col*2], hm, width=20, label="")
         push!(axes_vec, ax)
         push!(heatmaps_vec, hm)
@@ -680,7 +654,7 @@ function plot_six_animations_365_days(tracers, times_seconds, folder, labels, lo
     return fig
 end
 
-function prepare_six_animations(; tracers, times, folder, real_lon, real_lat, Nz)
+function prepare_six_animations(; tracers, times, folder, real_lon, real_lat, Nz, water_mask=nothing)
     labels = ["NUT [μM N]", "O₂ [μM N]", "PHY [μM N]",
               "HET [μM N]", "POM [μM N]", "DOM [μM N]"]
 
@@ -712,7 +686,7 @@ function prepare_six_animations(; tracers, times, folder, real_lon, real_lat, Nz
                                          real_lon, real_lat;
                                          colorranges=colorranges,
                                          colormaps=colormaps,
-                                         iz=Nz, framerate=1)
+                                         iz=Nz, framerate=1, water_mask=water_mask)
     else
         @info "Only <365 days available. Implement daily version if needed."
         # You can re-hook your older plot_six_animations_daily here if needed.
